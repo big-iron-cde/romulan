@@ -25,6 +25,33 @@ uv sync
 uv run romulan
 ```
 
+## Example ROM Input
+
+`build-rom.py` assembles this small 65C02 test program at CPU address `$0000`:
+
+```
+0x0000   0x18          @ CLC
+0x0001   0xA9          @ LDA 0x5
+0x0002   0x05          
+0x0003   0x8D 
+0x0004   0x00 
+0x0005   0x40
+0x0006   0x69 
+0x0007   0x03      
+0x0008   0x8D 
+0x0009   0x00 
+0x000A   0x40 
+0x000B   0x4C
+0x000C   0x80
+
+0xFFFC   0x0000 
+0xFFFD   0x0000
+0xFFFE   0x0000
+0xFFFF   0x0000
+```
+
+The resulting 32 KB `bin/rom.bin` fills unused space with `$EA` (NOP) and writes the reset/IRQ vectors so the CPU boots into the loop.
+
 ## TODOS
 
 1. **Parse and verify the "correctness" of an independent ROM file**  
