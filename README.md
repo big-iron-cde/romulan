@@ -59,7 +59,9 @@ The resulting 32 KB `bin/rom.bin` fills unused space with `$EA` (NOP) and writes
 
 2. **Write a BIN file from the ROM file**  
    Convert the parsed ROM into a flat 32 KB binary image ready for upload.
+   - How can we verify this?
 
 3. **Upload this ROM to the PICO**  
    Stream the binary to the Pico over USB serial using its `loadbin` protocol.  
    *Windows and Mac users may not have `ttyACM0` (it'll be called something else; how can we detect it?).*
+   - To the above point, how can we automagically find Picos attached to a host device?
