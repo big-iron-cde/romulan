@@ -47,20 +47,29 @@ def verify_data(*data: int) -> None:
                                  0x9E, 0xAC, 0xAD, 0xAE, 0xBC, 0xBD, 0xBE, 0xCC, 0xCD,
                                  0xCE, 0xD9, 0xDD, 0xDE, 0xEC, 0xED, 0xEE, 0xF9, 0xFD,
                                  0xFE]
-    
+
+    # Loop through each byte in `data`
     for d in data:
-        if d in invalid_instructions:
-            position = data.index(d)
-            if position == 1:
-                if data[0] in instructions_with_immediate:
-                    continue
-                elif data[0] in instructions_with_address:
-                    continue
-            elif position == 2:
-                if data[0] in instructions_with_address:
-                    continue
-            else:
-                raise ValueError(f"Invalid instruction: ${d}")
+        # Check if the byte fits the expected range for an instruction or memory location
+        if 0x00 <= d <= 0xFF:
+            # Compare d to all instructions in invalid_instructions list
+            if d in invalid_instructions:
+                position = data.index(d)
+                if position == 1:
+                    # Compare data[0] to all instructions requiring memory address instructions
+                    if data[0] in instructions_with_immediate or instructions_with_address:
+                        continue
+                # Covers instructions that require 2 bytes of memory address instructions
+                elif position == 2:
+                    if data[0] in instructions_with_address:
+                        continue
+                # Handles all invalid and in range instructions
+                # (those undefined in the opcode matrix and used in an opcode context)
+                else:
+                    raise ValueError(f"Invalid instruction: ${d} is undefined in the 65C02 instruction set")
+        # Handles all data bytes outside the valid range of 0x00 - 0xFF
+        else:
+            raise ValueError(f"Data byte ${d} is out of range (0x00 - 0xFF)")
 
 
 def main():
