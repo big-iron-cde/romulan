@@ -4,36 +4,16 @@ A Python toolchain for working with a **Pico-as-ROM 65C02 system** — a Raspber
 
 ## What It Does
 
-Romulan builds a 32 KB ROM image from an annotated hex dump and uploads it to the Pico over a USB serial connection. The Pico then presents that image to the 65C02 as memory at addresses `$8000`–`$FFFF`.
+Romulan builds a 32 KB ROM image and uploads it to the Pico over a USB serial connection. The Pico then presents that image to the 65C02 as memory at addresses `$8000`–`$FFFF`.
 
-## Input File Format
+### Files
 
-The input file is an annotated hex dump where each line contains:
-
-```
-0xADDR   0xBYTE   @ optional comment
-```
-
-- `ADDR` is the file address in the range `0x0000–0x7FFF` (maps to CPU `$8000–$FFFF`)
-- `BYTE` is the hex value to write at that address
-- Multi-byte instructions span multiple consecutive address lines
-
-Example:
-```
-0x0000   0x18   @ CLC
-0x0001   0xA9   @ LDA 0x5
-0x0002   0x05
-0x0003   0x8D   @ STA $4000
-0x0004   0x00
-0x0005   0x40
-...
-0x7FFC   0x00   @ Reset vector low
-0x7FFD   0x80   @ Reset vector high
-0x7FFE   0x00   @ IRQ vector low
-0x7FFF   0x80   @ IRQ vector high
-```
-
-**Important:** File addresses are offset by `0x8000` to get CPU addresses. The reset and IRQ vectors must be present at file offsets `0x7FFC–0x7FFF` (CPU `$FFFC–$FFFF`).
+| File | Purpose |
+|------|---------|
+| `src/romulan/main.py` | CLI entry point. Currently a placeholder — will orchestrate the full workflow. |
+| `src/romulan/build-rom.py` | Assembles a 32 KB ROM binary (`bin/rom.bin`) with a small test program (loads values into `$4000`, loops forever) and proper 65C02 reset/IRQ vectors. |
+| `src/romulan/upload-rom.py` | Uploads the binary to the Pico via USB serial and toggles the CPU reset line so the new image runs immediately. |
+| `pyproject.toml` | Project configuration. Managed with [uv](https://docs.astral.sh/uv/). |
 
 ## Quick Start
 
@@ -41,72 +21,18 @@ Example:
 # Install dependencies (creates .venv automatically)
 uv sync
 
-# Build a ROM from a hex dump (default output: bin/rom.bin)
-uv run romulan program.txt --build
-
-# Build to a custom path
-uv run romulan program.txt --build -o out/rom.bin
-
-# Upload an existing ROM to the Pico (default: bin/rom.bin)
-uv run romulan --upload
-
-# Upload a custom ROM file
-uv run romulan --upload -o out/rom.bin
-
-# Build and upload in one step
-uv run romulan program.txt --build --upload
-
-# Build and upload to a custom path
-uv run romulan program.txt --build --upload -o out/rom.bin
-
-# Specify a serial port explicitly
-uv run romulan program.txt --build --upload --port /dev/ttyACM0
+# Run the CLI
+uv run romulan
 ```
 
-## CLI Reference
+## TODOS
+single 
+1. **Parse and verify the "correctness" of an independent ROM file**  
+   Accept an arbitrary 65C02 ROM dump, validate its size (must be exactly 32 KB), and sanity-check the reset/IRQ vectors.
 
-```
-usage: romulan [-h] [--build] [--upload] [-o OUTPUT] [--port PORT] [input]
+2. **Write a BIN file from the ROM file**  
+   Convert the parsed ROM into a flat 32 KB binary image ready for upload.
 
-positional arguments:
-  input                Path to the annotated hex dump input file (required
-                       with --build)
-
-options:
-  -h, --help           show this help message and exit
-  --build              Build a .bin ROM image from the input file
-  --upload             Upload the ROM image to the Pico
-  -o, --output OUTPUT  Output ROM binary path (default: bin/rom.bin)
-  --port PORT          Serial port for the Pico (auto-detected if omitted)
-```
-
-### Auto-Detection
-
-If `--port` is omitted, Romulan tries to find your Pico automatically:
-
-- **Linux:** `/dev/ttyACM*`, `/dev/ttyUSB*`
-- **macOS:** `/dev/cu.usbmodem*`, `/dev/tty.usbmodem*`
-- **Windows:** `COM*`
-
-It uses the Raspberry Pi USB vendor ID (`0x2E8A`) to identify the device. If multiple ports are found, it asks you to specify one explicitly.
-
-## Project Structure
-
-| File | Purpose |
-|------|---------|
-| `src/romulan/main.py` | CLI entry point. Parses arguments and orchestrates build/upload. |
-| `src/romulan/build_rom.py` | Parses annotated hex dumps and assembles a 32 KB ROM binary (`bin/rom.bin`). |
-| `src/romulan/upload_rom.py` | Uploads the binary to the Pico via USB serial using the `loadbin` protocol. |
-| `pyproject.toml` | Project configuration. Managed with [uv](https://docs.astral.sh/uv/). |
-
-## Running Tests
-
-```bash
-uv run pytest tests/ -v
-```
-
-## Notes
-
-- The default ROM output path is `bin/rom.bin`. Use `-o` / `--output` to change it.
-- `--upload` without `--build` requires the specified output file (or `bin/rom.bin` by default) to exist.
-- The firmware expects exactly 32 KB (`32768` bytes).
+3. **Upload this ROM to the PICO**  
+   Stream the binary to the Pico over USB serial using its `loadbin` protocol.  
+   *Windows and Mac users may not have `ttyACM0` (it'll be called something else; how can we detect it?).*
