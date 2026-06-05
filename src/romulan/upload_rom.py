@@ -6,7 +6,7 @@ Usage:
     python3 upload-rom.py [PORT] [BIN]
 
 Defaults:
-    PORT = /dev/ttyACM0
+    PORT = /dev/ttyACM0 (or auto-detected)
     BIN  = bin/rom.bin
 
 The firmware exposes a tiny binary upload protocol on its USB-CDC port:
@@ -23,12 +23,14 @@ ROM emulator and CPU in whatever state you had them in before.
 
 from __future__ import annotations
 
+import glob
 import sys
 import time
 from pathlib import Path
 
 try:
     import serial
+    import serial.tools.list_ports
 except ImportError:
     sys.stderr.write(
         "ERROR: pyserial is required.  Install with:\n"
@@ -38,6 +40,57 @@ except ImportError:
 
 
 ROM_SIZE = 0x8000  # 32 KB — must match firmware
+# Raspberry Pi Pico USB VID
+RPI_VID = 0x2E8A
+
+
+def find_pico_port() -> str:
+    """Auto-detect a Raspberry Pi Pico serial port."""
+    # First try pyserial's list_ports with VID filter
+    ports = list(serial.tools.list_ports.comports())
+    pico_ports = [
+        p.device
+        for p in ports
+        if p.vid == RPI_VID or (p.manufacturer and "Raspberry Pi" in p.manufacturer)
+    ]
+
+    if len(pico_ports) == 1:
+        return pico_ports[0]
+    if len(pico_ports) > 1:
+        raise RuntimeError(
+            f"Multiple Raspberry Pi Pico devices found: {pico_ports}. "
+            "Please specify one with --port."
+        )
+
+    # Fallback: guess by port name patterns
+    patterns = [
+        "/dev/ttyACM*",
+        "/dev/ttyUSB*",
+        "/dev/cu.usbmodem*",
+        "/dev/tty.usbmodem*",
+    ]
+    candidates = []
+    for pattern in patterns:
+        candidates.extend(glob.glob(pattern))
+
+    # On Windows, COM ports don't glob; list_ports should have caught them.
+    # If we still have nothing, check for COM ports via list_ports.
+    if not candidates and sys.platform == "win32":
+        candidates = [p.device for p in ports]
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise RuntimeError(
+            f"Multiple serial ports found: {candidates}. "
+            "Please specify one with --port."
+        )
+
+    raise RuntimeError(
+        "No Raspberry Pi Pico serial port found.\n"
+        "Please ensure your Pico is connected and running the firmware, "
+        "or specify the port explicitly with --port."
+    )
 
 
 def read_until(ser: serial.Serial, needle: str, timeout: float = 3.0) -> str:
@@ -124,7 +177,7 @@ def upload(port: str, path: Path) -> None:
 
 def main() -> None:
     args = sys.argv[1:]
-    port = args[0] if len(args) >= 1 else "/dev/ttyACM0"
+    port = args[0] if len(args) >= 1 else find_pico_port()
     binp = Path(args[1]) if len(args) >= 2 else Path(__file__).parent / "bin" / "rom.bin"
     upload(port, binp)
 
