@@ -22,7 +22,7 @@ Romulan builds a 32 KB ROM image and uploads it to the Pico over a USB serial co
 uv sync
 
 # Run the CLI
-uv run romulan -- build --upload  -port /dev/ttyACM0
+uv run romulan <filename> -- build --upload  -port /dev/ttyACM0
 ```
 
 ## TODOS
