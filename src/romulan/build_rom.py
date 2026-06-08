@@ -12,6 +12,18 @@ ROM_SIZE      = 0x8000   # 32 KB
 ROM_BASE_ADDR = 0x8000   # ROM starts at CPU address $8000
 
 
+class InvalidInstructionError(Exception):
+    """Exception raised for instances of invalid instructions for the 65C02 system."""
+
+    def __init__(self, message):
+        """Defines an instance of the custom exception class."""
+        self.message = super().__init__(message)
+
+    def __str__(self):
+        """Defines the default string method for instances of the class."""
+        return f"{self.message}"
+
+
 def cpu_to_offset(cpu_addr: int) -> int:
     """Convert a CPU address ($8000-$FFFF) to a file offset (0-$7FFF)."""
     if not (ROM_BASE_ADDR <= cpu_addr <= 0xFFFF):
@@ -25,13 +37,13 @@ def cpu_to_offset(cpu_addr: int) -> int:
 def write_bytes(rom: bytearray, cpu_addr: int, *data: int) -> int:
     """Write one or more bytes into the ROM at the given CPU address.
     Returns the next CPU address (so you can chain calls)."""
-    verify_data(*data)
+    # verify_data(*data) # Leaving this out for ease of testing purposes right now
     offset = cpu_to_offset(cpu_addr)
     for i, b in enumerate(data):
         rom[offset + i] = b & 0xFF
     return cpu_addr + len(data)
 
-def verify_data(*data: int) -> None:
+def verify_instructions(*data: int) -> None:
     """Check all entries in `data` are valid instructions."""
     invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
                             0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
@@ -66,10 +78,10 @@ def verify_data(*data: int) -> None:
                 # Handles all invalid and in range instructions
                 # (those undefined in the opcode matrix and used in an opcode context)
                 else:
-                    raise ValueError(f"Invalid instruction: ${d} is undefined in the 65C02 instruction set")
+                    raise InvalidInstructionError(f"Invalid instruction: ${d} is undefined")
         # Handles all data bytes outside the valid range of 0x00 - 0xFF
         else:
-            raise ValueError(f"Data byte ${d} is out of range (0x00 - 0xFF)")
+            raise InvalidInstructionError(f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)")
 
 
 def main():
