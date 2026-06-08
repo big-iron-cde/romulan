@@ -17,11 +17,12 @@ class InvalidInstructionError(Exception):
 
     def __init__(self, message):
         """Defines an instance of the custom exception class."""
-        self.message = super().__init__(message)
+        super().__init__(message)
+        self.message = message
 
     def __str__(self):
         """Defines the default string method for instances of the class."""
-        return f"{self.message}"
+        return self.message
 
 
 def cpu_to_offset(cpu_addr: int) -> int:

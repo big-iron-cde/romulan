@@ -3,7 +3,7 @@
 
 import pytest
 
-from src.romulan.build_rom import InvalidInstructionError, verify_instructions
+from romulan.build_rom import InvalidInstructionError, verify_instructions
 
 
 # -----------------------------
