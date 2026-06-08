@@ -86,9 +86,9 @@ def test_immediate_memory() -> None:
 def test_addressing_mode() -> None:
     """Ensures that opcodes become valid when used as a memory instruction (2 byte version)."""
     addressing_list = [
-        [0x01, 0x02, 0x03],
-        [0x10, 0x20, 0x30],
-        [0xAB, 0xCD, 0xEF],
+        [0x00, 0x02, 0x03],
+        [0x8E, 0x73, 0xC2],
+        [0xAC, 0x5C, 0xEB],
     ]
 
     # Checks all lists of opcodes and memory instructions, should not raise an error
