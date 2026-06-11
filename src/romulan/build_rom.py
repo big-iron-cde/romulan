@@ -23,6 +23,7 @@ def cpu_to_offset(cpu_addr: int) -> int:
         )
     return cpu_addr - ROM_BASE_ADDR
 
+
 def parse_hex_file(path: Path) -> dict[int, int]:
     """Parse an annotated hex dump file into a dict of CPU address -> byte.
 
@@ -102,4 +103,5 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     print(f"Wrote {len(rom)} bytes to {output_path}")
     print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
     print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
+    print(cpu_to_offset)
 
