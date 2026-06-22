@@ -1,17 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "romulan"
 version = "0.1.0"
-description = "Add your description here"
+description = "Build and upload 32 KB ROM images for the Pico-as-ROM 65C02 system."
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Douglas Luman", email = "dluman@allegheny.edu"}
+]
 dependencies = [
     "pyserial>=3.5",
 ]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: System :: Hardware",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+]
+
+keywords = ["65c02", "rom", "pico", "raspberry-pi", "embedded", "serial", "retrocomputing", "6502", "firmware", "upload"]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
 ]
+
+[project.urls]
+"Homepage" = "https://github.com/big-iron-cde/romulan"
 
 [tool.uv]
 package = true
