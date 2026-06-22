@@ -40,6 +40,9 @@ dev = [
 [project.urls]
 "Homepage" = "https://github.com/big-iron-cde/romulan"
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.uv]
 package = true
 
