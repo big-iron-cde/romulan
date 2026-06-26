@@ -5,12 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "romulan"
 version = "0.1.0"
-description = "Build and upload 32 KB ROM images for the Pico-as-ROM 65C02 system."
+description = "Build and upload ROM images for the Pico-as-ROM 65C02 system."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Douglas Luman", email = "dluman@allegheny.edu"}
+    {name = "Douglas Luman", email = "dluman@allegheny.edu"},
+    {name = "Abishek Dhakal", email = "dhakal01@allegheny.edu"},
+    {name = "Molly Suppo", email = "suppo01@allegheny.edu"},
+    {name = "Cullen Doyle", email = "doyle01@allegheny.edu"}
 ]
 dependencies = [
     "pyserial>=3.5",
