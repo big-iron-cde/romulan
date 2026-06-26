@@ -7,14 +7,13 @@ File offset $7FFF = CPU address $FFFF
 """
 
 import os
+import re
 import sys
 from typing import List
+from pathlib import Path
 
-ROM_SIZE      = 0x8000   # 32 KB
-ROM_BASE_ADDR = 0x8000   # ROM starts at CPU address $8000
-ERROR_COUNTER = 0        # Global counter for tracking the number of errors encountered
-
-
+ROM_SIZE = 0x8000  # 32 KB
+ROM_BASE_ADDR = 0x8000  # ROM starts at CPU address $8000
 
 class InvalidInstructionError(Exception):
     """Exception raised for instances of invalid instructions for the 65C02 system."""
@@ -28,7 +27,6 @@ class InvalidInstructionError(Exception):
         """Defines the default string method for instances of the class."""
         return self.message
 
-
 def cpu_to_offset(cpu_addr: int) -> int:
     """Convert a CPU address ($8000-$FFFF) to a file offset (0-$7FFF)."""
     if not (ROM_BASE_ADDR <= cpu_addr <= 0xFFFF):
@@ -39,14 +37,101 @@ def cpu_to_offset(cpu_addr: int) -> int:
     return cpu_addr - ROM_BASE_ADDR
 
 
-def write_bytes(rom: bytearray, cpu_addr: int, *data: int) -> int:
-    """Write one or more bytes into the ROM at the given CPU address.
-    Returns the next CPU address (so you can chain calls)."""
-    # verify_instructions(*data)
-    offset = cpu_to_offset(cpu_addr)
-    for i, b in enumerate(data):
-        rom[offset + i] = b & 0xFF
-    return cpu_addr + len(data)
+def parse_hex_file(path: Path) -> dict[int, int]:
+    """Parse an annotated hex dump file into a dict of CPU address -> byte.
+
+    Expected line format:
+        0x0000   0x18   @ CLC
+        0x0001   0xA9   @ LDA 0x5
+
+    File addresses are in the range 0x0000-0x7FFF and are mapped to
+    CPU addresses by adding ROM_BASE_ADDR (0x8000).
+    """
+    data: dict[int, int] = {}
+    line_pattern = re.compile(
+        r"^\s*0x([0-9A-Fa-f]+)\s+0x([0-9A-Fa-f]{2})"
+    )
+
+    with open(path, "r", encoding="utf-8") as fh:
+        for line_num, line in enumerate(fh, start=1):
+            line = line.split("@")[0].strip()  # strip comments
+            if not line:
+                continue
+
+            match = line_pattern.match(line)
+            if not match:
+                raise ValueError(
+                    f"Cannot parse line {line_num}: {line.strip()!r}"
+                )
+
+            file_addr = int(match.group(1), 16)
+            byte_val = int(match.group(2), 16)
+
+            if not (0 <= file_addr < ROM_SIZE):
+                raise ValueError(
+                    f"Line {line_num}: file address 0x{file_addr:04X} is outside "
+                    f"the valid range 0x0000-0x{ROM_SIZE - 1:04X}"
+                )
+
+            cpu_addr = file_addr + ROM_BASE_ADDR
+            data[cpu_addr] = byte_val
+
+    return data
+
+
+def build_rom(input_path: Path, output_path: Path) -> None:
+    """Parse a hex dump file and write a 32 KB ROM binary."""
+    parsed = parse_hex_file(input_path)
+
+    # ─── Error processing ────────────────────────────────────────────────
+    # Creates the master error list to be printed if any errors are encountered.
+    master_error_list = []
+    # If any errors were encountered, print them and exit with a non-zero status.
+    if ERROR_COUNTER > 0:
+        # Prints the number of errors encountered
+        print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
+        # Prints each error in the list
+        for error in master_error_list:     # This currently doesn't work
+            print(f"  {error}")
+        # Indicates the build failed and exits with a non-zero status code.
+        print("ROM build failed due to errors.")
+        sys.exit(1)
+
+    # Fill with NOPs ($EA) so any unintentionally-executed bytes are harmless.
+    rom = bytearray([0xEA] * ROM_SIZE)
+
+
+    # Write parsed bytes into ROM at CPU addresses
+    for cpu_addr, byte_val in parsed.items():
+        offset = cpu_to_offset(cpu_addr)
+        rom[offset] = byte_val
+
+    # Validate required vectors
+    required_vectors = {
+        0xFFFC: "reset vector (low)",
+        0xFFFD: "reset vector (high)",
+        0xFFFE: "IRQ/BRK vector (low)",
+        0xFFFF: "IRQ/BRK vector (high)",
+    }
+    missing = []
+    for addr, desc in required_vectors.items():
+        offset = cpu_to_offset(addr)
+        if rom[offset] == 0xEA:
+            missing.append(f"  ${addr:04X} ({desc})")
+    if missing:
+        raise ValueError(
+            "ROM is missing required vectors:\n" + "\n".join(missing)
+        )
+
+    # Write the file
+    os.makedirs(output_path.parent, exist_ok=True)
+    with open(output_path, "wb") as fh:
+        fh.write(rom)
+
+    print(f"Wrote {len(rom)} bytes to {output_path}")
+    print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
+    print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
+    print(cpu_to_offset)
 
 def verify_instructions(*data: int, error_list: List) -> None:
     """Check all entries in `data` are valid instructions."""
@@ -98,63 +183,3 @@ def error_processing(*data: int)-> List:
     error_list_final = []
     verify_instructions(*data, error_list=error_list_final)
     return error_list_final
-
-
-def main():
-    # Fill with NOPs ($EA) so any unintentionally-executed bytes are harmless.
-    rom = bytearray([0xEA] * ROM_SIZE)
-
-    # ─── Program code, starting at CPU address $8000 ─────────────────────
-    #
-    # CLC                    ; clear carry so ADC is predictable
-    # LDA #$05               ; A = 5
-    # STA $4000              ; write 5 to $4000 (Pico watch port — avoid $5000;
-    #                        ;   high byte $50 couples onto the data bus)
-    # ADC #$03               ; A = 5 + 3 + 0 = 8
-    # STA $4000              ; write 8 to $4000
-    # JMP $8000              ; loop back to the top
-    #
-    pc = 0x8000
-    pc = write_bytes(rom, pc, 0x18)               # CLC
-    pc = write_bytes(rom, pc, 0xA9, 0x05)         # LDA #$05
-    pc = write_bytes(rom, pc, 0x8D, 0x00, 0x40)   # STA $4000
-    pc = write_bytes(rom, pc, 0x69, 0x03)         # ADC #$03
-    pc = write_bytes(rom, pc, 0x8D, 0x00, 0x40)   # STA $4000
-    pc = write_bytes(rom, pc, 0x4C, 0x00, 0x80)   # JMP $8000
-
-    # ─── Reset / IRQ vectors at the top of ROM ───────────────────────────
-    # CPU $FFFC-$FFFD = reset vector (where the CPU jumps on power-up)
-    write_bytes(rom, 0xFFFC, 0x00, 0x80)          # reset → $8000
-
-    # CPU $FFFE-$FFFF = IRQ/BRK vector. Point it back at $8000 too so any
-    # spurious BRK from broken RAM execution just restarts the program.
-    write_bytes(rom, 0xFFFE, 0x00, 0x80)          # IRQ/BRK → $8000
-
-    # ─── Error processing ────────────────────────────────────────────────
-    # Creates the master error list to be printed if any errors are encountered.
-    master_error_list = []
-    # If any errors were encountered, print them and exit with a non-zero status.
-    if ERROR_COUNTER > 0:
-        # Prints the number of errors encountered
-        print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
-        # Prints each error in the list
-        for error in master_error_list:     # This currently doesn't work
-            print(f"  {error}")
-        # Indicates the build failed and exits with a non-zero status code.
-        print("ROM build failed due to errors.")
-        sys.exit(1)
-
-    # ─── Write the file ──────────────────────────────────────────────────
-    os.makedirs("bin", exist_ok=True)
-    out_path = "bin/rom.bin"
-    with open(out_path, "wb") as fh:
-        fh.write(rom)
-
-    print(f"Wrote {len(rom)} bytes to {out_path}")
-    print(f"  Program at CPU $8000 ({pc - 0x8000} bytes)")
-    print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
-    print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
-
-
-if __name__ == "__main__":
-    main()
