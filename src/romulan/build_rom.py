@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROM_SIZE = 0x8000  # 32 KB
 ROM_BASE_ADDR = 0x8000  # ROM starts at CPU address $8000
+ERROR_COUNTER = 0  # Global counter for errors encountered during ROM build
 
 class InvalidInstructionError(Exception):
     """Exception raised for instances of invalid instructions for the 65C02 system."""
