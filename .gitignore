@@ -146,3 +146,7 @@ cython_debug/
 # Binary folder and contents
 *.bin
 bin/
+
+# Generated README artifacts
+README.html
+README_files/

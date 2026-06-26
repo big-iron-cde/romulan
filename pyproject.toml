@@ -3,11 +3,28 @@ name = "romulan"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = []
+requires-python = ">=3.11"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
 
 [tool.uv]
 package = true
 
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+markers = [
+    "range: Tests to verify out of range values raise error.",
+    "memory: Invalid opcodes as memory instruction for address-dependent functionality.",
+    "validity: Invalid opcodes without need for additional parameters."
+]
+
+
 [project.scripts]
 romulan = "romulan.main:main"
+
