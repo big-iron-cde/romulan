@@ -7,9 +7,13 @@ File offset $7FFF = CPU address $FFFF
 """
 
 import os
+import sys
+from typing import List
 
 ROM_SIZE      = 0x8000   # 32 KB
 ROM_BASE_ADDR = 0x8000   # ROM starts at CPU address $8000
+ERROR_COUNTER = 0        # Global counter for tracking the number of errors encountered
+
 
 
 class InvalidInstructionError(Exception):
@@ -38,13 +42,13 @@ def cpu_to_offset(cpu_addr: int) -> int:
 def write_bytes(rom: bytearray, cpu_addr: int, *data: int) -> int:
     """Write one or more bytes into the ROM at the given CPU address.
     Returns the next CPU address (so you can chain calls)."""
-    # verify_data(*data) # Leaving this out for ease of testing purposes right now
+    # verify_instructions(*data)
     offset = cpu_to_offset(cpu_addr)
     for i, b in enumerate(data):
         rom[offset + i] = b & 0xFF
     return cpu_addr + len(data)
 
-def verify_instructions(*data: int) -> None:
+def verify_instructions(*data: int, error_list: List) -> None:
     """Check all entries in `data` are valid instructions."""
     invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
                             0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
@@ -60,6 +64,8 @@ def verify_instructions(*data: int) -> None:
                                  0x9E, 0xAC, 0xAD, 0xAE, 0xBC, 0xBD, 0xBE, 0xCC, 0xCD,
                                  0xCE, 0xD9, 0xDD, 0xDE, 0xEC, 0xED, 0xEE, 0xF9, 0xFD,
                                  0xFE]
+
+    global ERROR_COUNTER
 
     # Loop through each byte in `data`
     for d in data:
@@ -79,10 +85,19 @@ def verify_instructions(*data: int) -> None:
                 # Handles all invalid and in range instructions
                 # (those undefined in the opcode matrix and used in an opcode context)
                 else:
-                    raise InvalidInstructionError(f"Invalid instruction: ${d} is undefined")
+                    error_list.append(f"Invalid instruction: ${d} is undefined")
+                    ERROR_COUNTER += 1
         # Handles all data bytes outside the valid range of 0x00 - 0xFF
         else:
-            raise InvalidInstructionError(f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)")
+            error_list.append(f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)")
+            ERROR_COUNTER += 1
+
+
+def error_processing(*data: int)-> List:
+    """Handle all error processing for the ROM file."""
+    error_list_final = []
+    verify_instructions(*data, error_list=error_list_final)
+    return error_list_final
 
 
 def main():
@@ -114,6 +129,20 @@ def main():
     # CPU $FFFE-$FFFF = IRQ/BRK vector. Point it back at $8000 too so any
     # spurious BRK from broken RAM execution just restarts the program.
     write_bytes(rom, 0xFFFE, 0x00, 0x80)          # IRQ/BRK → $8000
+
+    # ─── Error processing ────────────────────────────────────────────────
+    # Creates the master error list to be printed if any errors are encountered.
+    master_error_list = []
+    # If any errors were encountered, print them and exit with a non-zero status.
+    if ERROR_COUNTER > 0:
+        # Prints the number of errors encountered
+        print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
+        # Prints each error in the list
+        for error in master_error_list:     # This currently doesn't work
+            print(f"  {error}")
+        # Indicates the build failed and exits with a non-zero status code.
+        print("ROM build failed due to errors.")
+        sys.exit(1)
 
     # ─── Write the file ──────────────────────────────────────────────────
     os.makedirs("bin", exist_ok=True)
