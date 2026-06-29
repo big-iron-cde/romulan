@@ -3,7 +3,7 @@
 
 import pytest
 
-from romulan.src.romulan.build_rom import SkippedInstructionError
+from romulan.build_rom import SkippedInstructionError
 
 
 def test_skipped_instruction_error_is_exception() -> None:

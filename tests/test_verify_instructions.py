@@ -2,7 +2,7 @@
 
 import pytest
 
-from romulan.src.romulan.build_rom import verify_instructions
+from romulan.build_rom import verify_instructions
 
 
 # -----------------------------

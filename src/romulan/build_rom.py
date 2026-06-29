@@ -138,6 +138,13 @@ def verify_instructions(data: List[int], error_list: List) -> None:
             ERROR_COUNTER += 1
 
 
+def verify_instruction_order(data: List[int], error_list: List) -> None:
+    """Check that instructions are in the correct order and don't skip."""
+    # This function is a placeholder for future implementation.
+    # It will check the order of instructions in the data list and add any errors to error_list.
+    pass
+
+
 def error_processing(data_dict: Dict[int, int])-> List:
     """Handle all error processing for the ROM file."""
     # Pulls all bytes out of the data_dict and puts them into a list for processing

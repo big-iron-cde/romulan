@@ -3,7 +3,7 @@
 
 import pytest
 
-from romulan.src.romulan.build_rom import InvalidInstructionError
+from romulan.build_rom import InvalidInstructionError
 
 
 def test_invalid_instruction_error_is_exception() -> None:
