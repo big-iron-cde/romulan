@@ -28,6 +28,20 @@ class InvalidInstructionError(Exception):
         """Defines the default string method for instances of the class."""
         return self.message
 
+
+class SkippedInstructionError(Exception):
+    """Exception raised for instances of skipped instructions for the 65C02 system."""
+
+    def __init__(self, message):
+        """Defines an instance of the custom exception class."""
+        super().__init__(message)
+        self.message = message
+
+    def __str__(self):
+        """Defines the default string method for instances of the class."""
+        return self.message
+
+
 def cpu_to_offset(cpu_addr: int) -> int:
     """Convert a CPU address ($8000-$FFFF) to a file offset (0-$7FFF)."""
     if not (ROM_BASE_ADDR <= cpu_addr <= 0xFFFF):
