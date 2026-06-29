@@ -67,14 +67,16 @@ class CaptureResult:
 class HardwareAPI:
     """Context-manager compatible hardware API for Pico-as-ROM firmware v1."""
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 3.0):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 3.0, verbose: bool = False):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.verbose = verbose
         self._ser: serial.Serial | None = None
         self._open()
 
     def _open(self) -> None:
+        self._log(f"Opened {self.port} @ {self.baudrate}")
         self._ser = serial.Serial(
             self.port,
             self.baudrate,
@@ -86,6 +88,7 @@ class HardwareAPI:
 
     def close(self) -> None:
         if self._ser is not None:
+            self._log("Closed")
             self._ser.close()
             self._ser = None
 
@@ -105,20 +108,57 @@ class HardwareAPI:
         wait = self.timeout if timeout is None else timeout
         deadline = time.time() + wait
         while time.time() < deadline:
-            b = self.ser.read(1)
-            if b:
-                return b[0]
-        raise TimeoutError("timed out waiting for byte")
+            byte = self._ser.read(1)
+            if byte == ENQ:
+                return
+            if byte == b"":
+                continue
+        self._log("ERROR: timed out while resyncing to frame boundary")
+        raise TimeoutError("timed out while resyncing to frame boundary")
 
-    def _sync_to_byte(self, acceptable: set[int], timeout: float | None = None) -> int:
-        wait = self.timeout if timeout is None else timeout
-        deadline = time.time() + wait
-        while time.time() < deadline:
-            b = self.ser.read(1)
-            if b and b[0] in acceptable:
-                return b[0]
-        labels = ", ".join(f"0x{v:02X}" for v in sorted(acceptable))
-        raise TimeoutError(f"timed out waiting for {labels}")
+    def _send_frame(self, payload: bytes) -> bytes:
+        """Send a complete framed transaction and return the response payload.
+
+        Host → Pico frame:
+            ENQ → STX → (wait ACK) → payload → EOT → (wait ACK or NACK)
+
+        Pico → Host response frame:
+            ENQ → STX → (host ACK) → payload → EOT → (host ACK)
+
+        Returns the payload bytes that the receiver sent back (if any).
+        """
+        if self._ser is None:
+            raise HardwareAPIError("Serial port is closed")
+
+        self._log(f"SEND: {self._payload_preview(payload)}")
+
+        # Send our frame
+        self._ser.write(ENQ)
+        self._ser.write(STX)
+        self._ser.flush()
+
+        # Wait for ACK (receiver ready)
+        self._read_until_byte(ACK, time.time() + self.timeout)
+
+        # Send payload + EOT
+        self._ser.write(payload)
+        self._ser.write(EOT)
+        self._ser.flush()
+
+        # Wait for ACK or NACK (transaction accepted/rejected)
+        resp_deadline = time.time() + self.timeout
+        while time.time() < resp_deadline:
+            byte = self._ser.read(1)
+            if byte == ACK:
+                break
+            if byte == NACK:
+                self._log("ERROR: Pico responded with NACK")
+                raise HardwareAPIError("Pico responded with NACK")
+            if byte == b"":
+                continue
+        else:
+            self._log("ERROR: timed out waiting for ACK/NACK after EOT")
+            raise TimeoutError("timed out waiting for ACK/NACK after EOT")
 
     def _write_byte(self, value: int) -> None:
         self.ser.write(bytes([value]))
