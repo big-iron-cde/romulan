@@ -20,7 +20,6 @@ from .protocol_v1 import (
     ReadResult,
     StatusResponse,
     build_request,
-    parse_command_response,
     parse_cycle_event,
     parse_done_event,
     parse_frame,
@@ -76,6 +75,7 @@ class HardwareAPI:
         self.baudrate = baudrate
         self.timeout = timeout
         self.verbose = verbose
+        self._legacy_protocol = False
         self._ser: serial.Serial | None = None
         self._open()
 
@@ -181,14 +181,38 @@ class HardwareAPI:
         self._log(f"RECV: {self._payload_preview(raw)}")
         return parse_frame(raw)
 
+    def _parse_response(self, raw: bytes) -> dict[str, Any]:
+        try:
+            msg = parse_frame(raw)
+        except ProtocolV1Error as exc:
+            raise HardwareAPIError(str(exc)) from exc
+        if "v" not in msg:
+            self._legacy_protocol = True
+        if msg.get("ok") is False:
+            raise HardwareAPIError(
+                msg.get("detail") or msg.get("error") or "command failed"
+            )
+        return msg
+
     def _exchange_json(self, command: dict[str, Any]) -> dict[str, Any]:
         payload = json.dumps(command, separators=(",", ":")).encode("utf-8")
         raw = self._send_frame(payload)
-        msg = parse_frame(raw)
+        return self._parse_response(raw)
+
+    def _exchange_legacy_json(self, cmd: str, **fields: Any) -> dict[str, Any]:
+        payload = json.dumps({"cmd": cmd, **fields}, separators=(",", ":")).encode("utf-8")
+        raw = self._send_frame(payload)
+        return self._parse_response(raw)
+
+    @staticmethod
+    def _parse_addr(addr: Any) -> int:
+        if isinstance(addr, int):
+            return addr
+        text = str(addr)
         try:
-            return parse_command_response(msg)
-        except ProtocolV1Error as exc:
-            raise HardwareAPIError(str(exc)) from exc
+            return int(text, 16)
+        except ValueError:
+            return int(text)
 
     def _next_id(self) -> str:
         return uuid.uuid4().hex[:12]
@@ -203,15 +227,18 @@ class HardwareAPI:
         addr = resp.get("addr")
         if addr is None:
             raise HardwareAPIError(f"Missing 'addr' in response: {resp!r}")
-        addr_int = int(str(addr), 16)
+        addr_int = self._parse_addr(addr)
         self._log(f"RET request_addr -> {addr_int}")
         return addr_int
 
     def reset(self, assert_reset: bool) -> None:
         self._log(f"CALL reset(assert_reset={assert_reset})")
-        self._exchange_json(
-            build_request("reset", req_id=self._next_id(), assert_reset=assert_reset)
-        )
+        if self._legacy_protocol:
+            self._exchange_legacy_json("reset", value=0 if assert_reset else 1)
+        else:
+            self._exchange_json(
+                build_request("reset", req_id=self._next_id(), assert_reset=assert_reset)
+            )
         self._log("RET reset")
 
     def monitor(self, enable: bool) -> None:
@@ -232,6 +259,22 @@ class HardwareAPI:
 
         self.monitor(enable=False)
         self._drain_input()
+
+        if self._legacy_protocol:
+            self._exchange_legacy_json("loadbin", size=ROM_SIZE)
+            raw = self._send_frame(data)
+            try:
+                result = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise HardwareAPIError(
+                    f"Invalid JSON response after binary upload: {raw!r}"
+                ) from exc
+            if isinstance(result, dict) and result.get("ok") is False:
+                raise HardwareAPIError(
+                    result.get("detail") or result.get("error") or "upload failed"
+                )
+            self._log(f"RET upload_rom -> {result}")
+            return result
 
         begin = self._exchange_json(
             build_request(
@@ -281,6 +324,17 @@ class HardwareAPI:
         self._log(f"CALL read_until_stp(max_cycles={max_cycles})")
         self.monitor(enable=False)
         self._drain_input()
+
+        if self._legacy_protocol:
+            resp = self._exchange_legacy_json("read_until_stp", max_cycles=max_cycles)
+            cycles = resp.get("cycles", [])
+            if not isinstance(cycles, list):
+                raise HardwareAPIError(
+                    f"Expected 'cycles' list in response, got {type(cycles).__name__}"
+                )
+            capture = CaptureResult(reason=str(resp.get("reason", "unknown")), cycles=cycles)
+            self._log(f"RET read_until_stp -> {capture}")
+            return capture
 
         ack = self._exchange_json(
             build_request(

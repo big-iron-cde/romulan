@@ -32,6 +32,12 @@ def test_parse_frame_rejects_wrong_version():
         parse_frame(json.dumps({"v": 2, "cmd": "status"}))
 
 
+def test_parse_frame_accepts_missing_version():
+    msg = parse_frame('{"ok":true,"cmd":"monitor","enable":false}')
+    assert msg["cmd"] == "monitor"
+    assert "v" not in msg
+
+
 def test_parse_command_response_error():
     msg = {"v": 1, "ok": False, "error": "bad_size", "detail": "size must be 32768"}
     with pytest.raises(ProtocolV1Error) as exc:

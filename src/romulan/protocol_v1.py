@@ -81,9 +81,12 @@ def build_request(cmd: str, *, req_id: str | None = None, **fields: Any) -> dict
 
 
 def _require_version(msg: dict[str, Any]) -> None:
-    if msg.get("v") != PROTO_VERSION:
+    version = msg.get("v")
+    if version is None:
+        return
+    if version != PROTO_VERSION:
         raise ProtocolV1Error(
-            f"unsupported protocol version: {msg.get('v')!r}",
+            f"unsupported protocol version: {version!r}",
             error="unsupported_version",
         )
 

@@ -42,6 +42,7 @@ def _make_api(mock_serial, verbose=False):
     api.baudrate = 115200
     api.timeout = 3.0
     api.verbose = verbose
+    api._legacy_protocol = False
     return api
 
 
@@ -342,6 +343,39 @@ class TestVerboseLogging:
 # ---------------------------------------------------------------------------
 # Integration / smoke
 # ---------------------------------------------------------------------------
+
+class TestLegacyFirmware:
+    def test_monitor_without_version_field(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true,"cmd":"monitor","enable":false}')
+
+        api = _make_api(mock_serial)
+        api.monitor(enable=False)
+        assert api._legacy_protocol is True
+
+    def test_legacy_upload_loadbin(self, mock_serial):
+        rom = b"\xEA" * ROM_SIZE
+
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true,"cmd":"monitor","enable":false}')
+
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true,"cmd":"loadbin","size":32768}')
+
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"loaded":32768}')
+
+        api = _make_api(mock_serial)
+        result = api.upload_rom(rom)
+        assert result == {"loaded": 32768}
+
+    def test_request_addr_decimal(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true,"cmd":"request_addr","addr":32768}')
+
+        api = _make_api(mock_serial)
+        assert api.request_addr() == 32768
+
 
 class TestHardwareAPIIntegration:
     @patch("romulan.hardware_api.serial.Serial")
