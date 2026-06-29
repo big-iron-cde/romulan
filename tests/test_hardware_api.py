@@ -42,7 +42,6 @@ def _make_api(mock_serial, verbose=False):
     api.baudrate = 115200
     api.timeout = 3.0
     api.verbose = verbose
-    api._legacy_protocol = False
     return api
 
 
@@ -344,30 +343,51 @@ class TestVerboseLogging:
 # Integration / smoke
 # ---------------------------------------------------------------------------
 
-class TestLegacyFirmware:
+class TestFirmwareWithoutVersionField:
     def test_monitor_without_version_field(self, mock_serial):
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(mock_serial, b'{"ok":true,"cmd":"monitor","enable":false}')
 
         api = _make_api(mock_serial)
         api.monitor(enable=False)
-        assert api._legacy_protocol is True
 
-    def test_legacy_upload_loadbin(self, mock_serial):
+    def test_upload_without_version_in_responses(self, mock_serial):
         rom = b"\xEA" * ROM_SIZE
 
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(mock_serial, b'{"ok":true,"cmd":"monitor","enable":false}')
 
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"ok":true,"cmd":"loadbin","size":32768}')
+        _enqueue_response(
+            mock_serial,
+            b'{"ok":true,"cmd":"upload_rom","action":"begin","received":0,"expected":32768}',
+        )
+
+        offset = 0
+        while offset < ROM_SIZE:
+            received = offset + min(CHUNK_RAW_MAX, ROM_SIZE - offset)
+            resp = json.dumps(
+                {
+                    "ok": True,
+                    "cmd": "upload_rom",
+                    "action": "chunk",
+                    "offset": offset,
+                    "received": received,
+                }
+            ).encode()
+            _enqueue_transaction_acks(mock_serial)
+            _enqueue_response(mock_serial, resp)
+            offset = received
 
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"loaded":32768}')
+        _enqueue_response(
+            mock_serial,
+            b'{"ok":true,"cmd":"upload_rom","action":"commit","bytes":32768,"reset_vector":"8000"}',
+        )
 
         api = _make_api(mock_serial)
         result = api.upload_rom(rom)
-        assert result == {"loaded": 32768}
+        assert result["bytes"] == ROM_SIZE
 
     def test_request_addr_decimal(self, mock_serial):
         _enqueue_transaction_acks(mock_serial)
