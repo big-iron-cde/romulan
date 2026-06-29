@@ -8,13 +8,11 @@ File offset $7FFF = CPU address $FFFF
 
 import os
 import re
-import sys
-from typing import List
 from pathlib import Path
 
 ROM_SIZE = 0x8000  # 32 KB
 ROM_BASE_ADDR = 0x8000  # ROM starts at CPU address $8000
-ERROR_COUNTER = 0  # Global counter for errors encountered during ROM build
+
 
 class InvalidInstructionError(Exception):
     """Exception raised for instances of invalid instructions for the 65C02 system."""
@@ -84,20 +82,6 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     """Parse a hex dump file and write a 32 KB ROM binary."""
     parsed = parse_hex_file(input_path)
 
-    # ─── Error processing ────────────────────────────────────────────────
-    # Creates the master error list to be printed if any errors are encountered.
-    master_error_list = []
-    # If any errors were encountered, print them and exit with a non-zero status.
-    if ERROR_COUNTER > 0:
-        # Prints the number of errors encountered
-        print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
-        # Prints each error in the list
-        for error in master_error_list:     # This currently doesn't work
-            print(f"  {error}")
-        # Indicates the build failed and exits with a non-zero status code.
-        print("ROM build failed due to errors.")
-        sys.exit(1)
-
     # Fill with NOPs ($EA) so any unintentionally-executed bytes are harmless.
     rom = bytearray([0xEA] * ROM_SIZE)
 
@@ -132,9 +116,9 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     print(f"Wrote {len(rom)} bytes to {output_path}")
     print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
     print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
-    print(cpu_to_offset)
 
-def verify_instructions(*data: int, error_list: List) -> None:
+
+def verify_instructions(*data: int) -> None:
     """Check all entries in `data` are valid instructions."""
     invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
                             0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
@@ -151,36 +135,19 @@ def verify_instructions(*data: int, error_list: List) -> None:
                                  0xCE, 0xD9, 0xDD, 0xDE, 0xEC, 0xED, 0xEE, 0xF9, 0xFD,
                                  0xFE]
 
-    global ERROR_COUNTER
-
-    # Loop through each byte in `data`
     for d in data:
-        # Check if the byte fits the expected range for an instruction or memory location
         if 0x00 <= d <= 0xFF:
-            # Compare d to all instructions in invalid_instructions list
             if d in invalid_instructions:
                 position = data.index(d)
                 if position == 1:
-                    # Compare data[0] to all instructions requiring memory address instructions
-                    if data[0] in instructions_with_immediate or instructions_with_address:
+                    if data[0] in instructions_with_immediate or data[0] in instructions_with_address:
                         continue
-                # Covers instructions that require 2 bytes of memory address instructions
                 elif position == 2:
                     if data[0] in instructions_with_address:
                         continue
-                # Handles all invalid and in range instructions
-                # (those undefined in the opcode matrix and used in an opcode context)
                 else:
-                    error_list.append(f"Invalid instruction: ${d} is undefined")
-                    ERROR_COUNTER += 1
-        # Handles all data bytes outside the valid range of 0x00 - 0xFF
+                    raise InvalidInstructionError(f"Invalid instruction: ${d:02X} is undefined")
         else:
-            error_list.append(f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)")
-            ERROR_COUNTER += 1
-
-
-def error_processing(*data: int)-> List:
-    """Handle all error processing for the ROM file."""
-    error_list_final = []
-    verify_instructions(*data, error_list=error_list_final)
-    return error_list_final
+            raise InvalidInstructionError(
+                f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)"
+            )

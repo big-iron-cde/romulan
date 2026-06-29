@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -47,6 +48,9 @@ class CaptureResult:
 
     reason: str
     cycles: list[dict[str, Any]] = field(default_factory=list)
+
+    def __repr__(self) -> str:
+        return f"CaptureResult(reason={self.reason!r}, cycles={len(self.cycles)})"
 
     @classmethod
     def from_read_result(cls, result: ReadResult) -> CaptureResult:
@@ -104,61 +108,27 @@ class HardwareAPI:
             raise HardwareAPIError("Serial port is closed")
         return self._ser
 
-    def _read_byte(self, timeout: float | None = None) -> int:
+    def _log(self, msg: str) -> None:
+        if self.verbose:
+            print(f"[HW] {msg}", file=sys.stderr, flush=True)
+
+    @staticmethod
+    def _payload_preview(payload: bytes) -> str:
+        try:
+            return payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"<binary, {len(payload)} bytes>"
+
+    def _sync_to_byte(self, acceptable: set[int], timeout: float | None = None) -> int:
         wait = self.timeout if timeout is None else timeout
         deadline = time.time() + wait
         while time.time() < deadline:
-            byte = self._ser.read(1)
-            if byte == ENQ:
-                return
-            if byte == b"":
-                continue
-        self._log("ERROR: timed out while resyncing to frame boundary")
-        raise TimeoutError("timed out while resyncing to frame boundary")
-
-    def _send_frame(self, payload: bytes) -> bytes:
-        """Send a complete framed transaction and return the response payload.
-
-        Host → Pico frame:
-            ENQ → STX → (wait ACK) → payload → EOT → (wait ACK or NACK)
-
-        Pico → Host response frame:
-            ENQ → STX → (host ACK) → payload → EOT → (host ACK)
-
-        Returns the payload bytes that the receiver sent back (if any).
-        """
-        if self._ser is None:
-            raise HardwareAPIError("Serial port is closed")
-
-        self._log(f"SEND: {self._payload_preview(payload)}")
-
-        # Send our frame
-        self._ser.write(ENQ)
-        self._ser.write(STX)
-        self._ser.flush()
-
-        # Wait for ACK (receiver ready)
-        self._read_until_byte(ACK, time.time() + self.timeout)
-
-        # Send payload + EOT
-        self._ser.write(payload)
-        self._ser.write(EOT)
-        self._ser.flush()
-
-        # Wait for ACK or NACK (transaction accepted/rejected)
-        resp_deadline = time.time() + self.timeout
-        while time.time() < resp_deadline:
-            byte = self._ser.read(1)
-            if byte == ACK:
-                break
-            if byte == NACK:
-                self._log("ERROR: Pico responded with NACK")
-                raise HardwareAPIError("Pico responded with NACK")
-            if byte == b"":
-                continue
-        else:
-            self._log("ERROR: timed out waiting for ACK/NACK after EOT")
-            raise TimeoutError("timed out waiting for ACK/NACK after EOT")
+            b = self.ser.read(1)
+            if b and b[0] in acceptable:
+                return b[0]
+        labels = ", ".join(f"0x{v:02X}" for v in sorted(acceptable))
+        self._log(f"ERROR: timed out waiting for {labels}")
+        raise TimeoutError(f"timed out waiting for {labels}")
 
     def _write_byte(self, value: int) -> None:
         self.ser.write(bytes([value]))
@@ -181,27 +151,34 @@ class HardwareAPI:
                     self._write_byte(ACK)
                     return bytes(buf)
                 buf.append(byte)
-        raise TimeoutError("timed out waiting for EOT")
+        self._log("ERROR: timed out waiting for EOT in response payload")
+        raise TimeoutError("timed out waiting for EOT in response payload")
 
     def _send_frame_host(self, payload: bytes) -> None:
+        self._log(f"SEND: {self._payload_preview(payload)}")
         self._write_byte(ENQ)
         self._write_byte(STX)
         if self._sync_to_byte({ACK, NACK}) != ACK:
-            raise HardwareAPIError("Pico responded with NACK before payload")
+            self._log("ERROR: Pico responded with NACK")
+            raise HardwareAPIError("Pico responded with NACK")
         self.ser.write(payload)
         self._write_byte(EOT)
         if self._sync_to_byte({ACK, NACK}) != ACK:
-            raise HardwareAPIError("Pico responded with NACK after EOT")
+            self._log("ERROR: Pico responded with NACK")
+            raise HardwareAPIError("Pico responded with NACK")
 
     def _send_frame(self, payload: bytes) -> bytes:
         self._send_frame_host(payload)
         self._sync_to_byte({ENQ})
-        return self._read_frame_payload()
+        raw = self._read_frame_payload()
+        self._log(f"RECV: {self._payload_preview(raw)}")
+        return raw
 
     def _recv_json_frame(self, timeout: float | None = None) -> dict[str, Any]:
         wait = self.timeout if timeout is None else timeout
         self._sync_to_byte({ENQ}, timeout=wait)
         raw = self._read_frame_payload(timeout=wait)
+        self._log(f"RECV: {self._payload_preview(raw)}")
         return parse_frame(raw)
 
     def _exchange_json(self, command: dict[str, Any]) -> dict[str, Any]:
@@ -221,27 +198,35 @@ class HardwareAPI:
         self.ser.reset_input_buffer()
 
     def request_addr(self) -> int:
+        self._log("CALL request_addr()")
         resp = self._exchange_json(build_request("request_addr", req_id=self._next_id()))
         addr = resp.get("addr")
         if addr is None:
             raise HardwareAPIError(f"Missing 'addr' in response: {resp!r}")
-        return int(str(addr), 16)
+        addr_int = int(str(addr), 16)
+        self._log(f"RET request_addr -> {addr_int}")
+        return addr_int
 
     def reset(self, assert_reset: bool) -> None:
+        self._log(f"CALL reset(assert_reset={assert_reset})")
         self._exchange_json(
             build_request("reset", req_id=self._next_id(), assert_reset=assert_reset)
         )
+        self._log("RET reset")
 
     def monitor(self, enable: bool) -> None:
+        self._log(f"CALL monitor(enable={enable})")
         self._exchange_json(
             build_request("monitor", req_id=self._next_id(), enable=enable)
         )
+        self._log("RET monitor")
 
     def status(self) -> StatusResponse:
         resp = self._exchange_json(build_request("status", req_id=self._next_id()))
         return parse_status(resp)
 
     def upload_rom(self, data: bytes) -> dict[str, Any]:
+        self._log(f"CALL upload_rom(size={len(data)})")
         if len(data) != ROM_SIZE:
             raise ValueError(f"ROM must be exactly {ROM_SIZE} bytes, got {len(data)}")
 
@@ -279,18 +264,21 @@ class HardwareAPI:
             build_request("upload_rom", req_id=self._next_id(), action="commit")
         )
         final = parse_upload_response(commit)
-        return {
+        result = {
             "ok": True,
             "bytes": final.received,
             "reset_vector": final.reset_vector,
             "expected": progress.expected,
         }
+        self._log(f"RET upload_rom -> {result}")
+        return result
 
     def read_until_stp(
         self,
         max_cycles: int = 10000,
         frame_timeout: float = READ_FRAME_TIMEOUT,
     ) -> CaptureResult:
+        self._log(f"CALL read_until_stp(max_cycles={max_cycles})")
         self.monitor(enable=False)
         self._drain_input()
 
@@ -324,7 +312,9 @@ class HardwareAPI:
             else:
                 raise HardwareAPIError(f"unexpected frame during read: {msg}")
 
-        return CaptureResult.from_read_result(result)
+        capture = CaptureResult.from_read_result(result)
+        self._log(f"RET read_until_stp -> {capture}")
+        return capture
 
 
 def open_hardware_api(port: str | None = None) -> HardwareAPI:

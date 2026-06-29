@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from romulan.hardware_api import CaptureResult, HardwareAPI
+from romulan.hardware_api import CaptureResult, HardwareAPI, HardwareAPIError
 from romulan.protocol_v1 import CHUNK_RAW_MAX, ROM_SIZE, build_request
 
 ENQ = b"\x05"
@@ -54,6 +54,14 @@ def _enqueue_response(mock_serial, response_payload: bytes):
 def _enqueue_transaction_acks(mock_serial):
     mock_serial._read_buffer.append(ACK)
     mock_serial._read_buffer.append(ACK)
+
+
+def _enqueue_ack(mock_serial):
+    mock_serial._read_buffer.append(ACK)
+
+
+def _enqueue_nack(mock_serial):
+    mock_serial._read_buffer.append(NACK)
 
 
 class TestSendFrame:
@@ -160,6 +168,7 @@ class TestReadUntilStp:
         assert result.reason == "stp"
         assert len(result.cycles) == 1
 
+
 # ---------------------------------------------------------------------------
 # CaptureResult
 # ---------------------------------------------------------------------------
@@ -186,11 +195,14 @@ class TestVerboseLogging:
     def test_request_addr_verbose(self, mock_serial, capsys):
         """verbose=True prints CALL, SEND, RECV, RET for request_addr."""
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"addr":32768}')
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"request_addr","addr":"8000"}',
+        )
 
         api = _make_api(mock_serial, verbose=True)
         addr = api.request_addr()
-        assert addr == 32768
+        assert addr == 0x8000
 
         captured = capsys.readouterr()
         assert "[HW] CALL request_addr()" in captured.err
@@ -201,7 +213,7 @@ class TestVerboseLogging:
     def test_reset_verbose(self, mock_serial, capsys):
         """verbose=True prints CALL and RET for reset."""
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"ok":true}')
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"reset"}')
 
         api = _make_api(mock_serial, verbose=True)
         api.reset(assert_reset=True)
@@ -213,7 +225,7 @@ class TestVerboseLogging:
     def test_monitor_verbose(self, mock_serial, capsys):
         """verbose=True prints CALL and RET for monitor."""
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"ok":true}')
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
 
         api = _make_api(mock_serial, verbose=True)
         api.monitor(enable=False)
@@ -223,47 +235,67 @@ class TestVerboseLogging:
         assert "[HW] RET monitor" in captured.err
 
     def test_upload_rom_verbose(self, mock_serial, capsys):
-        """verbose=True prints CALL, nested monitor, binary SEND/RECV, RET."""
-        rom = b"\xEA" * 0x8000
+        """verbose=True prints CALL, nested monitor, chunk SEND/RECV, RET."""
+        rom = b"\xEA" * ROM_SIZE
 
-        # First frame: disable monitor
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"ok":true}')
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
 
-        # Second frame: command
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"ok":true}')
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"upload_rom","action":"begin","received":0,"expected":32768}',
+        )
 
-        # Third frame: binary
+        offset = 0
+        while offset < ROM_SIZE:
+            received = offset + min(CHUNK_RAW_MAX, ROM_SIZE - offset)
+            resp = json.dumps(
+                {
+                    "v": 1,
+                    "ok": True,
+                    "cmd": "upload_rom",
+                    "action": "chunk",
+                    "offset": offset,
+                    "received": received,
+                }
+            ).encode()
+            _enqueue_transaction_acks(mock_serial)
+            _enqueue_response(mock_serial, resp)
+            offset = received
+
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"loaded":32768}')
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"upload_rom","action":"commit","bytes":32768,"reset_vector":"8000"}',
+        )
 
         api = _make_api(mock_serial, verbose=True)
         result = api.upload_rom(rom)
-        assert result == {"loaded": 32768}
+        assert result["bytes"] == ROM_SIZE
 
         captured = capsys.readouterr()
         assert "[HW] CALL upload_rom(size=32768)" in captured.err
         assert "[HW] CALL monitor(enable=False)" in captured.err
-        assert "[HW] SEND: <binary, 32768 bytes>" in captured.err
-        assert "[HW] RECV: {\"loaded\":32768}" in captured.err
-        assert "[HW] RET upload_rom -> {'loaded': 32768}" in captured.err
+        assert "[HW] RET upload_rom ->" in captured.err
 
     def test_read_until_stp_verbose(self, mock_serial, capsys):
-        """verbose=True prints CALL, SEND, RECV, RET for read_until_stp."""
-        # First frame: disable monitor
+        """verbose=True prints CALL and RET for read_until_stp."""
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"ok":true}')
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
 
-        # Second frame: read_until_stp
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(
             mock_serial,
-            b'{"reason":"stp","cycles":[{"addr":32768,"data":24,"rw":"read"}]}',
+            b'{"v":1,"ok":true,"cmd":"read","until":"stp","max_cycles":500}',
+        )
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"type":"event","event":"done","ok":true,"reason":"stp","cycles":0,"addr":"8000"}',
         )
 
         api = _make_api(mock_serial, verbose=True)
-        result = api.read_until_stp(max_cycles=500)
+        api.read_until_stp(max_cycles=500)
 
         captured = capsys.readouterr()
         assert "[HW] CALL read_until_stp(max_cycles=500)" in captured.err
@@ -272,7 +304,10 @@ class TestVerboseLogging:
     def test_verbose_false_silent(self, mock_serial, capsys):
         """verbose=False produces no [HW] output."""
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"addr":32768}')
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"request_addr","addr":"8000"}',
+        )
 
         api = _make_api(mock_serial, verbose=False)
         api.request_addr()
@@ -283,7 +318,7 @@ class TestVerboseLogging:
     def test_binary_payload_preview(self, mock_serial, capsys):
         """Binary payloads are previewed as <binary, N bytes>."""
         _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"ok":true}')
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true}')
 
         api = _make_api(mock_serial, verbose=True)
         api._send_frame(b"\x80\x81\x82\x83")
@@ -293,8 +328,8 @@ class TestVerboseLogging:
 
     def test_error_logs_verbose(self, mock_serial, capsys):
         """Timeouts and NACK are logged in verbose mode."""
-        _enqueue_ack(mock_serial)  # receiver ready
-        _enqueue_nack(mock_serial)  # transaction rejected
+        _enqueue_ack(mock_serial)
+        _enqueue_nack(mock_serial)
 
         api = _make_api(mock_serial, verbose=True)
         with pytest.raises(HardwareAPIError, match="NACK"):
