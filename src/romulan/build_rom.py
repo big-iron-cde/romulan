@@ -9,7 +9,7 @@ File offset $7FFF = CPU address $FFFF
 import os
 import re
 import sys
-from typing import List
+from typing import Dict, List
 from pathlib import Path
 
 ROM_SIZE = 0x8000  # 32 KB
@@ -80,19 +80,74 @@ def parse_hex_file(path: Path) -> dict[int, int]:
     return data
 
 
+def verify_instructions(data: List[int], error_list: List) -> None:
+    """Check all entries in `data` are valid instructions."""
+    invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
+                            0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
+                            0x62, 0x63, 0x6B, 0x73, 0x7B, 0x82, 0x83, 0x8B, 0x93,
+                            0x9B, 0xA3, 0xAB, 0xB3, 0xBB, 0xC2, 0xC3, 0xD3, 0xD4,
+                            0xDC, 0xE2, 0xE3, 0xEB, 0xF3, 0xF4, 0xFB, 0xFC]
+    instructions_with_immediate = [0x09, 0x29, 0x49, 0x69, 0x89, 0xA0, 0xA2, 0xA9, 0xC0,
+                                   0xC9, 0xE0, 0xE9]
+    instructions_with_address = [0x00, 0x0C, 0x0D, 0x0E, 0x19, 0x1C, 0x1D, 0x1E, 0x20,
+                                 0x2A, 0x2C, 0x2D, 0x2E, 0x39, 0x3C, 0x3D, 0x3E, 0x4C,
+                                 0x4D, 0x4E, 0x59, 0x5D, 0x5E, 0x6C, 0x6D, 0x6E, 0x79,
+                                 0x7C, 0x7D, 0x7E, 0x8C, 0x8D, 0x8E, 0x99, 0x9C, 0x9D,
+                                 0x9E, 0xAC, 0xAD, 0xAE, 0xBC, 0xBD, 0xBE, 0xCC, 0xCD,
+                                 0xCE, 0xD9, 0xDD, 0xDE, 0xEC, 0xED, 0xEE, 0xF9, 0xFD,
+                                 0xFE]
+
+    global ERROR_COUNTER
+
+    # Loop through each byte in `data`
+    for d in data:
+        # Check if the byte fits the expected range for an instruction or memory location
+        if 0x00 <= d <= 0xFF:
+            # Compare d to all instructions in invalid_instructions list
+            if d in invalid_instructions:
+                position = data.index(d)
+                # Compare data[position - 1] to all instructions requiring memory address instructions
+                # This looks for the instructions around the possible invalid inatruction
+                if data[position - 1] in instructions_with_immediate or data[position - 1] in instructions_with_address:
+                    continue
+                # Covers instructions that require 2 bytes of memory address instructions
+                elif position - 2 >= 0 and data[position - 2] in instructions_with_address:
+                    continue
+                # Handles all invalid and in range instructions
+                # (those undefined in the opcode matrix and used in an opcode context)
+                else:
+                    error_list.append(f"Invalid instruction: ${d} is undefined")
+                    ERROR_COUNTER += 1
+        # Handles all data bytes outside the valid range of 0x00 - 0xFF
+        else:
+            error_list.append(f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)")
+            ERROR_COUNTER += 1
+
+
+def error_processing(data_dict: Dict[int, int])-> List:
+    """Handle all error processing for the ROM file."""
+    # Pulls all bytes out of the data_dict and puts them into a list for processing
+    data_list = list(data_dict.values())
+    # Initializes an empty list to hold any errors found during instruction verification
+    error_list_final = []
+    # Calls verify_instructions to check for invalid instructions and populate error list
+    verify_instructions(data=data_list, error_list=error_list_final)
+    return error_list_final
+
+
 def build_rom(input_path: Path, output_path: Path) -> None:
     """Parse a hex dump file and write a 32 KB ROM binary."""
     parsed = parse_hex_file(input_path)
 
     # ─── Error processing ────────────────────────────────────────────────
-    # Creates the master error list to be printed if any errors are encountered.
-    master_error_list = []
+    # Runs the error processing function to compile a list of errors to print
+    master_error_list = error_processing(parsed)
     # If any errors were encountered, print them and exit with a non-zero status.
     if ERROR_COUNTER > 0:
         # Prints the number of errors encountered
         print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
         # Prints each error in the list
-        for error in master_error_list:     # This currently doesn't work
+        for error in master_error_list:
             print(f"  {error}")
         # Indicates the build failed and exits with a non-zero status code.
         print("ROM build failed due to errors.")
@@ -133,54 +188,3 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
     print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
     print(cpu_to_offset)
-
-def verify_instructions(*data: int, error_list: List) -> None:
-    """Check all entries in `data` are valid instructions."""
-    invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
-                            0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
-                            0x62, 0x63, 0x6B, 0x73, 0x7B, 0x82, 0x83, 0x8B, 0x93,
-                            0x9B, 0xA3, 0xAB, 0xB3, 0xBB, 0xC2, 0xC3, 0xD3, 0xD4,
-                            0xDC, 0xE2, 0xE3, 0xEB, 0xF3, 0xF4, 0xFB, 0xFC]
-    instructions_with_immediate = [0x09, 0x29, 0x49, 0x69, 0x89, 0xA0, 0xA2, 0xA9, 0xC0,
-                                   0xC9, 0xE0, 0xE9]
-    instructions_with_address = [0x00, 0x0C, 0x0D, 0x0E, 0x19, 0x1C, 0x1D, 0x1E, 0x20,
-                                 0x2A, 0x2C, 0x2D, 0x2E, 0x39, 0x3C, 0x3D, 0x3E, 0x4C,
-                                 0x4D, 0x4E, 0x59, 0x5D, 0x5E, 0x6C, 0x6D, 0x6E, 0x79,
-                                 0x7C, 0x7D, 0x7E, 0x8C, 0x8D, 0x8E, 0x99, 0x9C, 0x9D,
-                                 0x9E, 0xAC, 0xAD, 0xAE, 0xBC, 0xBD, 0xBE, 0xCC, 0xCD,
-                                 0xCE, 0xD9, 0xDD, 0xDE, 0xEC, 0xED, 0xEE, 0xF9, 0xFD,
-                                 0xFE]
-
-    global ERROR_COUNTER
-
-    # Loop through each byte in `data`
-    for d in data:
-        # Check if the byte fits the expected range for an instruction or memory location
-        if 0x00 <= d <= 0xFF:
-            # Compare d to all instructions in invalid_instructions list
-            if d in invalid_instructions:
-                position = data.index(d)
-                if position == 1:
-                    # Compare data[0] to all instructions requiring memory address instructions
-                    if data[0] in instructions_with_immediate or instructions_with_address:
-                        continue
-                # Covers instructions that require 2 bytes of memory address instructions
-                elif position == 2:
-                    if data[0] in instructions_with_address:
-                        continue
-                # Handles all invalid and in range instructions
-                # (those undefined in the opcode matrix and used in an opcode context)
-                else:
-                    error_list.append(f"Invalid instruction: ${d} is undefined")
-                    ERROR_COUNTER += 1
-        # Handles all data bytes outside the valid range of 0x00 - 0xFF
-        else:
-            error_list.append(f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)")
-            ERROR_COUNTER += 1
-
-
-def error_processing(*data: int)-> List:
-    """Handle all error processing for the ROM file."""
-    error_list_final = []
-    verify_instructions(*data, error_list=error_list_final)
-    return error_list_final
