@@ -44,13 +44,14 @@ def mock_serial():
     return ser
 
 
-def _make_api(mock_serial):
+def _make_api(mock_serial, verbose=False):
     """Instantiate HardwareAPI with a pre-injected mock serial object."""
     api = HardwareAPI.__new__(HardwareAPI)
     api._ser = mock_serial
     api.port = "/dev/ttyFAKE"
     api.baudrate = 115200
     api.timeout = 3.0
+    api.verbose = verbose
     return api
 
 
@@ -339,6 +340,132 @@ class TestCaptureResult:
         """CaptureResult repr shows reason and cycle count."""
         cr = CaptureResult(reason="max_cycles", cycles=[])
         assert repr(cr) == "CaptureResult(reason='max_cycles', cycles=0)"
+
+
+# ---------------------------------------------------------------------------
+# Verbose logging
+# ---------------------------------------------------------------------------
+
+class TestVerboseLogging:
+    def test_request_addr_verbose(self, mock_serial, capsys):
+        """verbose=True prints CALL, SEND, RECV, RET for request_addr."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"addr":32768}')
+
+        api = _make_api(mock_serial, verbose=True)
+        addr = api.request_addr()
+        assert addr == 32768
+
+        captured = capsys.readouterr()
+        assert "[HW] CALL request_addr()" in captured.err
+        assert "[HW] SEND: " in captured.err
+        assert "[HW] RECV: " in captured.err
+        assert "[HW] RET request_addr -> 32768" in captured.err
+
+    def test_reset_verbose(self, mock_serial, capsys):
+        """verbose=True prints CALL and RET for reset."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true}')
+
+        api = _make_api(mock_serial, verbose=True)
+        api.reset(assert_reset=True)
+
+        captured = capsys.readouterr()
+        assert "[HW] CALL reset(assert_reset=True)" in captured.err
+        assert "[HW] RET reset" in captured.err
+
+    def test_monitor_verbose(self, mock_serial, capsys):
+        """verbose=True prints CALL and RET for monitor."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true}')
+
+        api = _make_api(mock_serial, verbose=True)
+        api.monitor(enable=False)
+
+        captured = capsys.readouterr()
+        assert "[HW] CALL monitor(enable=False)" in captured.err
+        assert "[HW] RET monitor" in captured.err
+
+    def test_upload_rom_verbose(self, mock_serial, capsys):
+        """verbose=True prints CALL, nested monitor, binary SEND/RECV, RET."""
+        rom = b"\xEA" * 0x8000
+
+        # First frame: disable monitor
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true}')
+
+        # Second frame: command
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true}')
+
+        # Third frame: binary
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"loaded":32768}')
+
+        api = _make_api(mock_serial, verbose=True)
+        result = api.upload_rom(rom)
+        assert result == {"loaded": 32768}
+
+        captured = capsys.readouterr()
+        assert "[HW] CALL upload_rom(size=32768)" in captured.err
+        assert "[HW] CALL monitor(enable=False)" in captured.err
+        assert "[HW] SEND: <binary, 32768 bytes>" in captured.err
+        assert "[HW] RECV: {\"loaded\":32768}" in captured.err
+        assert "[HW] RET upload_rom -> {'loaded': 32768}" in captured.err
+
+    def test_read_until_stp_verbose(self, mock_serial, capsys):
+        """verbose=True prints CALL, SEND, RECV, RET for read_until_stp."""
+        # First frame: disable monitor
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true}')
+
+        # Second frame: read_until_stp
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"reason":"stp","cycles":[{"addr":32768,"data":24,"rw":"read"}]}',
+        )
+
+        api = _make_api(mock_serial, verbose=True)
+        result = api.read_until_stp(max_cycles=500)
+
+        captured = capsys.readouterr()
+        assert "[HW] CALL read_until_stp(max_cycles=500)" in captured.err
+        assert "[HW] RET read_until_stp ->" in captured.err
+
+    def test_verbose_false_silent(self, mock_serial, capsys):
+        """verbose=False produces no [HW] output."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"addr":32768}')
+
+        api = _make_api(mock_serial, verbose=False)
+        api.request_addr()
+
+        captured = capsys.readouterr()
+        assert "[HW]" not in captured.err
+
+    def test_binary_payload_preview(self, mock_serial, capsys):
+        """Binary payloads are previewed as <binary, N bytes>."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"ok":true}')
+
+        api = _make_api(mock_serial, verbose=True)
+        api._send_frame(b"\x80\x81\x82\x83")
+
+        captured = capsys.readouterr()
+        assert "[HW] SEND: <binary, 4 bytes>" in captured.err
+
+    def test_error_logs_verbose(self, mock_serial, capsys):
+        """Timeouts and NACK are logged in verbose mode."""
+        _enqueue_ack(mock_serial)  # receiver ready
+        _enqueue_nack(mock_serial)  # transaction rejected
+
+        api = _make_api(mock_serial, verbose=True)
+        with pytest.raises(HardwareAPIError, match="NACK"):
+            api._send_frame(b"x")
+
+        captured = capsys.readouterr()
+        assert "[HW] ERROR: Pico responded with NACK" in captured.err
 
 
 # ---------------------------------------------------------------------------

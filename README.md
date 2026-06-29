@@ -68,24 +68,29 @@ uv run romulan program.txt --build -o output/rom.bin
 
 ### Hardware API
 
+The `--port` flag is optional when exactly one Pico is connected — Romulan auto-detects it. Add `--verbose` (or `-v`) to any hardware command to see every message sent and received.
+
 ```bash
-# Upload a ROM via the framed protocol
+# Upload a ROM via the framed protocol (auto-detect port, show protocol trace)
+uv run romulan hardware upload bin/rom.bin --verbose
+
+# Upload with explicit port
 uv run romulan hardware upload bin/rom.bin --port /dev/ttyACM0
 
 # Capture CPU bus cycles until STP or max cycles
-uv run romulan hardware capture --max-cycles 500 --port /dev/ttyACM0
+uv run romulan hardware capture --max-cycles 500
 
 # Hold CPU in reset
-uv run romulan hardware reset --assert --port /dev/ttyACM0
+uv run romulan hardware reset --assert
 
 # Release CPU from reset
-uv run romulan hardware reset --release --port /dev/ttyACM0
+uv run romulan hardware reset --release
 
 # Disable unstructured monitor output
-uv run romulan hardware monitor --disable --port /dev/ttyACM0
+uv run romulan hardware monitor --disable
 
 # Request the current CPU address
-uv run romulan hardware request-addr --port /dev/ttyACM0
+uv run romulan hardware request-addr
 ```
 
 ## Input File Format
@@ -128,11 +133,27 @@ At least one of `--build` or `--upload` is required, but `--upload` can only be 
 
 | Subcommand | Arguments | Description |
 |------------|-----------|-------------|
-| `hardware upload` | `<bin_path> [--port]` | Upload a ROM binary via the framed protocol |
-| `hardware capture` | `--max-cycles <N> [--port]` | Capture CPU bus cycles until STP or max cycles reached |
-| `hardware monitor` | `--enable \| --disable [--port]` | Toggle unstructured ASCII monitor output |
-| `hardware reset` | `--assert \| --release [--port]` | Hold or release the CPU reset line |
-| `hardware request-addr` | `[--port]` | Request the current CPU address |
+| `hardware upload` | `<bin_path> [--port] [-v]` | Upload a ROM binary via the framed protocol |
+| `hardware capture` | `--max-cycles <N> [--port] [-v]` | Capture CPU bus cycles until STP or max cycles reached |
+| `hardware monitor` | `--enable \| --disable [--port] [-v]` | Toggle unstructured ASCII monitor output |
+| `hardware reset` | `--assert \| --release [--port] [-v]` | Hold or release the CPU reset line |
+| `hardware request-addr` | `[--port] [-v]` | Request the current CPU address |
+
+| Flag | Description |
+|------|-------------|
+| `--verbose`, `-v` | Print every JSON message sent and received over the serial protocol |
+
+#### Verbose example
+
+```bash
+$ uv run romulan hardware request-addr --verbose
+[HW] Opened /dev/ttyACM0 @ 115200
+[HW] CALL request_addr()
+[HW] SEND: {"cmd": "request_addr"}
+[HW] RECV: {"addr": 32768}
+[HW] RET request_addr -> 32768
+Current CPU address: 0x8000
+```
 
 ## Architecture
 
@@ -229,6 +250,33 @@ Tests cover:
 - Port detection (single Pico, multiple Picos, no Pico found)
 - Framed serial protocol (frame construction, error handling, command dispatch)
 - Hardware API state machine (mock serial interactions)
+
+## Troubleshooting Serial Communication
+
+If a hardware command fails, run it again with `--verbose` (or `-v`) to see the exact messages sent and received:
+
+```bash
+$ uv run romulan hardware request-addr --verbose
+[HW] Opened /dev/ttyACM0 @ 115200
+[HW] CALL request_addr()
+[HW] SEND: {"cmd": "request_addr"}
+[HW] RECV: {"addr": 32768}
+[HW] RET request_addr -> 32768
+Current CPU address: 0x8000
+```
+
+### Reading the verbose output
+
+| `[HW]` line | Meaning |
+|-------------|---------|
+| `Opened ...` | Serial port connected successfully |
+| `CALL ...`  | Entering a HardwareAPI method |
+| `SEND: ...` | Exact JSON (or binary summary) sent to the Pico |
+| `RECV: ...` | Exact JSON response from the Pico |
+| `RET ...`   | Method returned successfully |
+| `ERROR: timed out ...` | Pico didn't respond in time — check cable, firmware, or port |
+| `ERROR: Pico responded with NACK` | Pico rejected the command — check firmware version |
+| `SEND: <binary, N bytes>` | ROM upload payload (not printed as raw hex) |
 
 ## Hardware Notes
 

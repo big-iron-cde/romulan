@@ -60,14 +60,16 @@ class HardwareAPI:
             print(capture.reason, len(capture.cycles))
     """
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 3.0):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 3.0, verbose: bool = False):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.verbose = verbose
         self._ser: serial.Serial | None = None
         self._open()
 
     def _open(self) -> None:
+        self._log(f"Opened {self.port} @ {self.baudrate}")
         self._ser = serial.Serial(
             self.port,
             self.baudrate,
@@ -79,6 +81,7 @@ class HardwareAPI:
 
     def close(self) -> None:
         if self._ser is not None:
+            self._log("Closed")
             self._ser.close()
             self._ser = None
 
@@ -87,6 +90,21 @@ class HardwareAPI:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close()
+
+    # ------------------------------------------------------------------
+    # Verbose helpers
+    # ------------------------------------------------------------------
+
+    def _log(self, msg: str) -> None:
+        if self.verbose:
+            print(f"[HW] {msg}", file=sys.stderr, flush=True)
+
+    @staticmethod
+    def _payload_preview(payload: bytes) -> str:
+        try:
+            return payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"<binary, {len(payload)} bytes>"
 
     # ------------------------------------------------------------------
     # Low-level framing
@@ -102,6 +120,7 @@ class HardwareAPI:
                 return
             if byte == b"":
                 continue
+        self._log(f"ERROR: timed out waiting for {expected!r}")
         raise TimeoutError(f"timed out waiting for {expected!r}")
 
     def _resync(self) -> None:
@@ -119,6 +138,7 @@ class HardwareAPI:
                 return
             if byte == b"":
                 continue
+        self._log("ERROR: timed out while resyncing to frame boundary")
         raise TimeoutError("timed out while resyncing to frame boundary")
 
     def _send_frame(self, payload: bytes) -> bytes:
@@ -134,6 +154,8 @@ class HardwareAPI:
         """
         if self._ser is None:
             raise HardwareAPIError("Serial port is closed")
+
+        self._log(f"SEND: {self._payload_preview(payload)}")
 
         # Send our frame
         self._ser.write(ENQ)
@@ -155,10 +177,12 @@ class HardwareAPI:
             if byte == ACK:
                 break
             if byte == NACK:
+                self._log("ERROR: Pico responded with NACK")
                 raise HardwareAPIError("Pico responded with NACK")
             if byte == b"":
                 continue
         else:
+            self._log("ERROR: timed out waiting for ACK/NACK after EOT")
             raise TimeoutError("timed out waiting for ACK/NACK after EOT")
 
         # Receive the response frame from Pico.
@@ -185,13 +209,16 @@ class HardwareAPI:
                 break
             resp_buf.extend(chunk)
         else:
+            self._log("ERROR: timed out waiting for EOT in response payload")
             raise TimeoutError("timed out waiting for EOT in response payload")
 
         # Send ACK (response accepted)
         self._ser.write(ACK)
         self._ser.flush()
 
-        return bytes(resp_buf)
+        resp_bytes = bytes(resp_buf)
+        self._log(f"RECV: {self._payload_preview(resp_bytes)}")
+        return resp_bytes
 
     def _send_json(self, cmd: str, **kwargs: Any) -> Dict[str, Any]:
         """Send a JSON command and return the parsed JSON response."""
@@ -213,21 +240,26 @@ class HardwareAPI:
 
         Returns the address as an integer.
         """
+        self._log("CALL request_addr()")
         resp = self._send_json("request_addr")
         addr = resp.get("addr")
         if addr is None:
             raise HardwareAPIError(
                 f"Missing 'addr' in response: {resp!r}"
             )
-        return int(addr)
+        addr = int(addr)
+        self._log(f"RET request_addr -> {addr}")
+        return addr
 
     def reset(self, assert_reset: bool) -> None:
         """Hold or release the CPU reset line.
 
         :param assert_reset: ``True`` to assert (hold) reset, ``False`` to release.
         """
+        self._log(f"CALL reset(assert_reset={assert_reset})")
         value = 0 if assert_reset else 1
         self._send_json("reset", value=value)
+        self._log("RET reset")
 
     def monitor(self, enable: bool) -> None:
         """Enable or disable the unstructured monitor output.
@@ -238,7 +270,9 @@ class HardwareAPI:
             corrupt the frame stream.  ``upload_rom`` and ``read_until_stp``
             disable it automatically.
         """
+        self._log(f"CALL monitor(enable={enable})")
         self._send_json("monitor", enable=enable)
+        self._log("RET monitor")
 
     def upload_rom(self, data: bytes) -> Dict[str, Any]:
         """Upload a 32 KB ROM image to the Pico.
@@ -251,6 +285,7 @@ class HardwareAPI:
         :param data: The raw ROM binary (must be exactly 32,768 bytes).
         :returns: The Pico response dict (e.g. ``{"loaded": 32768}``).
         """
+        self._log(f"CALL upload_rom(size={len(data)})")
         if len(data) != 0x8000:
             raise ValueError(
                 f"ROM must be exactly {0x8000} bytes, got {len(data)}"
@@ -266,11 +301,13 @@ class HardwareAPI:
         resp_bytes = self._send_frame(data)
 
         try:
-            return json.loads(resp_bytes.decode("utf-8"))
+            result = json.loads(resp_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HardwareAPIError(
                 f"Invalid JSON response after binary upload: {resp_bytes!r}"
             ) from exc
+        self._log(f"RET upload_rom -> {result}")
+        return result
 
     def read_until_stp(self, max_cycles: int) -> "CaptureResult":
         """Capture CPU bus cycles until the STP instruction is hit.
@@ -280,6 +317,7 @@ class HardwareAPI:
         :param max_cycles: Maximum number of cycles to capture.
         :returns: A ``CaptureResult`` with ``reason`` and ``cycles``.
         """
+        self._log(f"CALL read_until_stp(max_cycles={max_cycles})")
         # Ensure monitor is disabled
         self.monitor(enable=False)
 
@@ -292,7 +330,9 @@ class HardwareAPI:
                 f"Expected 'cycles' list in response, got {type(cycles).__name__}"
             )
 
-        return CaptureResult(reason=reason, cycles=cycles)
+        result = CaptureResult(reason=reason, cycles=cycles)
+        self._log(f"RET read_until_stp -> {result}")
+        return result
 
 
 @dataclass
