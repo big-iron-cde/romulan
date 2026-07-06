@@ -182,6 +182,8 @@ def error_processing(data_dict: Dict[int, int]) -> List:
 
 def build_rom(input_path: Path, output_path: Path) -> None:
     """Parse a hex dump file and write a 32 KB ROM binary."""
+    global ERROR_COUNTER
+    ERROR_COUNTER = 0  # Reset the error counter for each build
     parsed = parse_hex_file(input_path)
 
     # ─── Error processing ────────────────────────────────────────────────
