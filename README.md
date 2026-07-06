@@ -6,7 +6,7 @@ A Python toolchain for building and uploading 32 KB ROM images to a **Pico-as-RO
 
 Romulan bridges the gap between annotated 65C02 assembly code and a live hardware ROM. It parses annotated hex dump files, assembles a 32 KB ROM binary with proper reset and IRQ vectors, and uploads it to the Pico over USB serial. The Pico then presents the image to the 65C02 as memory at addresses `$8000`–`$FFFF`.
 
-Romulan also supports a **framed JSON serial protocol** for advanced hardware control — CPU reset, monitor toggle, address peek, and cycle capture — alongside the standard plain-text upload flow.
+Romulan also supports a **framed JSON serial protocol (v1)** for advanced hardware control — chunked ROM upload, CPU reset, monitor toggle, address peek, bus capture, and status queries — alongside the standard plain-text upload flow.
 
 ## Features
 
@@ -16,7 +16,8 @@ Romulan also supports a **framed JSON serial protocol** for advanced hardware co
 - **Cross-platform port detection** — Auto-detects the Raspberry Pi Pico serial port on Linux, macOS, and Windows
 - **Safe upload protocol** — Orchestrates CPU reset, ROM toggle, and firmware handshake during upload
 - **Live serial capture** — Streams Pico output for 5 seconds after upload so you can see the CPU running
-- **Framed serial protocol** — JSON-based hardware API with byte-level framing (ENQ/STX/ACK/EOT) for safe, structured communication with the Pico
+- **Framed serial protocol (v1)** — Versioned JSON envelopes over byte-level framing (ENQ/STX/ACK/EOT) for safe, structured communication with the Pico
+- **65C02 opcode validation** — `verify_instructions` checks for undefined opcodes and distinguishes opcode bytes from immediate/address operands
 
 ## Requirements
 
@@ -41,13 +42,13 @@ uv sync
 ### Build a ROM binary
 
 ```bash
-uv run romulan program.txt --build
+uv run romulan demo.txt --build
 ```
 
 ### Build and upload in one step
 
 ```bash
-uv run romulan program.txt --build --upload
+uv run romulan demo.txt --build --upload
 ```
 
 ### Upload an existing binary
@@ -60,32 +61,37 @@ uv run romulan --upload
 
 ```bash
 # Custom serial port
-uv run romulan program.txt --build --upload --port /dev/ttyACM0
+uv run romulan demo.txt --build --upload --port /dev/ttyACM0
 
 # Custom output path
-uv run romulan program.txt --build -o output/rom.bin
+uv run romulan demo.txt --build -o output/rom.bin
 ```
 
 ### Hardware API
 
+The `--port` flag is optional when exactly one Pico is connected — Romulan auto-detects it. Add `--verbose` (or `-v`) to any hardware command to see every message sent and received.
+
 ```bash
-# Upload a ROM via the framed protocol
+# Upload a ROM via the framed protocol (auto-detect port, show protocol trace)
+uv run romulan hardware upload bin/rom.bin --verbose
+
+# Upload with explicit port
 uv run romulan hardware upload bin/rom.bin --port /dev/ttyACM0
 
 # Capture CPU bus cycles until STP or max cycles
-uv run romulan hardware capture --max-cycles 500 --port /dev/ttyACM0
+uv run romulan hardware capture --max-cycles 500
 
 # Hold CPU in reset
-uv run romulan hardware reset --assert --port /dev/ttyACM0
+uv run romulan hardware reset --assert
 
 # Release CPU from reset
-uv run romulan hardware reset --release --port /dev/ttyACM0
+uv run romulan hardware reset --release
 
 # Disable unstructured monitor output
-uv run romulan hardware monitor --disable --port /dev/ttyACM0
+uv run romulan hardware monitor --disable
 
 # Request the current CPU address
-uv run romulan hardware request-addr --port /dev/ttyACM0
+uv run romulan hardware request-addr
 ```
 
 ## Input File Format
@@ -128,11 +134,27 @@ At least one of `--build` or `--upload` is required, but `--upload` can only be 
 
 | Subcommand | Arguments | Description |
 |------------|-----------|-------------|
-| `hardware upload` | `<bin_path> [--port]` | Upload a ROM binary via the framed protocol |
-| `hardware capture` | `--max-cycles <N> [--port]` | Capture CPU bus cycles until STP or max cycles reached |
-| `hardware monitor` | `--enable \| --disable [--port]` | Toggle unstructured ASCII monitor output |
-| `hardware reset` | `--assert \| --release [--port]` | Hold or release the CPU reset line |
-| `hardware request-addr` | `[--port]` | Request the current CPU address |
+| `hardware upload` | `<bin_path> [--port] [-v]` | Upload a ROM binary via the framed protocol |
+| `hardware capture` | `--max-cycles <N> [--port] [-v]` | Capture CPU bus cycles until STP or max cycles reached |
+| `hardware monitor` | `--enable \| --disable [--port] [-v]` | Toggle unstructured ASCII monitor output |
+| `hardware reset` | `--assert \| --release [--port] [-v]` | Hold or release the CPU reset line |
+| `hardware request-addr` | `[--port] [-v]` | Request the current CPU address |
+
+| Flag | Description |
+|------|-------------|
+| `--verbose`, `-v` | Print every JSON message sent and received over the serial protocol |
+
+#### Verbose example
+
+```bash
+$ uv run romulan hardware request-addr --verbose
+[HW] Opened /dev/ttyACM0 @ 115200
+[HW] CALL request_addr()
+[HW] SEND: {"cmd": "request_addr"}
+[HW] RECV: {"addr": 32768}
+[HW] RET request_addr -> 32768
+Current CPU address: 0x8000
+```
 
 ## Architecture
 
@@ -167,45 +189,62 @@ Romulan wraps this with additional safety steps:
 6. Release CPU reset (`r1`)
 7. Capture live output for 5 seconds
 
-### Framed Protocol
+### Framed Protocol (v1)
 
-The hardware API uses a byte-level framed protocol for robust JSON communication:
+The hardware API uses a byte-level framed protocol for robust JSON communication. Every JSON payload includes `"v": 1` to identify the protocol version.
 
-- **Frame start:** `ENQ` (0x05)
-- **Payload start:** `STX` (0x02)
-- **Receiver ready:** `ACK` (0x06)
-- **Payload:** JSON (except raw binary ROM upload)
-- **End of payload:** `EOT` (0x04)
-- **Accepted:** `ACK` (0x06)
-- **Rejected:** `NACK` (0x15)
+**Frame sequence:**
 
-The implementation silently discards stray bytes (monitor lines, echoed ACKs) while resyncing to frame boundaries.
+| Step | Direction | Byte | Meaning |
+|------|-----------|------|---------|
+| 1 | Host → Pico | `ENQ` (0x05) | Start frame |
+| 2 | Host → Pico | `STX` (0x02) | Payload follows |
+| 3 | Pico → Host | `ACK` (0x06) | Ready for payload |
+| 4 | Host → Pico | JSON bytes | Command or response |
+| 5 | Host → Pico | `EOT` (0x04) | End of payload |
+| 6 | Pico → Host | `ACK` / `NACK` | Accepted or rejected |
 
-**ROM upload** uses a two-phase exchange:
-1. JSON command frame: `{"cmd": "loadbin", "size": 32768}`
-2. Raw binary frame: the 32,768 bytes
+The client resyncs on `ENQ`/`STX` and discards stray bytes (monitor lines, echoed ACKs) while waiting.
+
+**ROM upload** uses a three-phase `upload_rom` command with base64-encoded chunks (max 1,476 raw bytes per chunk):
+
+1. `{"v":1,"cmd":"upload_rom","action":"begin","size":32768}`
+2. `{"v":1,"cmd":"upload_rom","action":"chunk","offset":N,"data":"<base64>"}` — repeated until all 32,768 bytes are sent
+3. `{"v":1,"cmd":"upload_rom","action":"commit"}` — firmware validates and activates the image
+
+**Bus capture** uses the `read` command. The host sends `{"v":1,"cmd":"read","until":"stp","max_cycles":N}` and then receives streaming event frames until a `done` event arrives:
+
+- `{"type":"event","event":"cycle",...}` — one CPU bus cycle
+- `{"type":"event","event":"done",...}` — capture finished (STP hit, max cycles, or error)
 
 **Supported commands:**
-- `loadbin` — upload 32 KB ROM image
-- `reset` — assert or release CPU reset
-- `monitor` — enable or disable ASCII monitor output
-- `request_addr` — read current CPU address
-- `read_until_stp` — capture CPU bus cycles until STP or max cycles
+
+| Command | Purpose |
+|---------|---------|
+| `upload_rom` | Upload 32 KB ROM image (begin / chunk / commit) |
+| `reset` | Assert or release CPU reset |
+| `monitor` | Enable or disable ASCII monitor output |
+| `request_addr` | Read current CPU address |
+| `read` | Capture CPU bus cycles until STP or max cycles |
+| `status` | Query firmware state (clock rate, ROM active, reset, etc.) |
 
 ## Project Structure
 
 ```
 romulan/
 ├── src/romulan/
-│   ├── __init__.py
 │   ├── main.py          # CLI entry point and argument parsing
-│   ├── build_rom.py     # Hex dump parser and ROM binary builder
-│   ├── upload_rom.py    # Serial port detection and standard upload protocol
-│   ├── hardware_api.py  # Framed serial protocol and hardware API
-│   └── demo.txt         # Sample annotated hex dump
+│   ├── build_rom.py     # Hex dump parser, ROM builder, and opcode validation
+│   ├── upload_rom.py    # Serial port detection and plain-text upload protocol
+│   ├── hardware_api.py  # Framed serial protocol client (v1)
+│   └── protocol_v1.py   # Protocol v1 JSON envelope parser and request builder
 ├── tests/
-│   ├── test_main.py     # Test suite for parser, builder, CLI, and upload
-│   └── test_hardware_api.py  # Tests for the framed serial protocol
+│   ├── test_main.py                  # Parser, builder, CLI, and upload tests
+│   ├── test_hardware_api.py          # Hardware API client and mock serial tests
+│   ├── test_protocol_v1.py           # Protocol v1 frame parsing and request building
+│   ├── test_verify_instructions.py   # 65C02 opcode validation tests
+│   └── test_invalid_instruction_error.py
+├── demo.txt             # Sample annotated hex dump
 ├── bin/
 │   └── rom.bin          # Generated ROM binary (gitignored)
 ├── pyproject.toml       # Project configuration (uv-managed)
@@ -224,11 +263,40 @@ uv run pytest
 Tests cover:
 
 - Hex dump parsing (valid files, out-of-range addresses, invalid lines)
-- ROM building (valid builds)
+- ROM building (valid builds, vector validation)
 - CLI behavior (build-only, upload-only, build+upload, error handling)
 - Port detection (single Pico, multiple Picos, no Pico found)
-- Framed serial protocol (frame construction, error handling, command dispatch)
-- Hardware API state machine (mock serial interactions)
+- Protocol v1 JSON envelopes (version checks, status/upload/cycle/done parsing)
+- Framed serial protocol (frame construction, chunked upload, error handling)
+- Hardware API client (mock serial interactions for upload, capture, reset)
+- 65C02 opcode validation (`verify_instructions`, `InvalidInstructionError`)
+
+## Troubleshooting Serial Communication
+
+If a hardware command fails, run it again with `--verbose` (or `-v`) to see the exact messages sent and received:
+
+```bash
+$ uv run romulan hardware request-addr --verbose
+[HW] Opened /dev/ttyACM0 @ 115200
+[HW] CALL request_addr()
+[HW] SEND: {"cmd": "request_addr"}
+[HW] RECV: {"addr": 32768}
+[HW] RET request_addr -> 32768
+Current CPU address: 0x8000
+```
+
+### Reading the verbose output
+
+| `[HW]` line | Meaning |
+|-------------|---------|
+| `Opened ...` | Serial port connected successfully |
+| `CALL ...`  | Entering a HardwareAPI method |
+| `SEND: ...` | Exact JSON (or binary summary) sent to the Pico |
+| `RECV: ...` | Exact JSON response from the Pico |
+| `RET ...`   | Method returned successfully |
+| `ERROR: timed out ...` | Pico didn't respond in time — check cable, firmware, or port |
+| `ERROR: Pico responded with NACK` | Pico rejected the command — check firmware version |
+| `SEND: <binary, N bytes>` | ROM upload payload (not printed as raw hex) |
 
 ## Hardware Notes
 
@@ -245,9 +313,9 @@ If auto-detection fails or finds multiple ports, specify the port explicitly wit
 This toolchain supports two modes:
 
 - **Standard plain-text mode:** commands `loadbin`, `rom`, `roms`, `r0`, `r1`, `c100`, `watch`
-- **Framed protocol mode:** commands `loadbin`, `reset`, `monitor`, `read_until_stp`, `request_addr`
+- **Framed protocol v1 mode:** commands `upload_rom`, `reset`, `monitor`, `read`, `request_addr`, `status`
 
-Both modes are compatible with the Pico-as-ROM firmware.
+The standard CLI uses plain-text mode. The `romulan hardware` subcommands use framed protocol v1.
 
 ### Safety
 
