@@ -153,7 +153,7 @@ def verify_instruction_order(data: List[int], error_list: List) -> None:
         current = sorted_data[i]
         next_addr = sorted_data[i + 1]
         # Stops the loop if a reset vector is reached since those are checked separately
-        if current in (0x7FFC, 0x7FFD, 0x7FFE, 0x7FFF):
+        if current in (0x7FFC, 0x7FFD, 0x7FFE, 0x7FFF) or next_addr in (0x7FFC, 0x7FFD, 0x7FFE, 0x7FFF):
             break
         # Logs any skipped instructions to the error list and increments the error counter
         if next_addr != current + 1:

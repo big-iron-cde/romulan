@@ -57,6 +57,7 @@ def test_invalid_opcodes() -> None:
     # Checks all opcodes in the list, should produce an error for each invalid opcode
     error_list = []
     verify_instructions(data=invalid_opcodes_list, error_list=error_list)
+    # Checks that the error list contains three errors, meaning three invalid opcodes were found
     assert len(error_list) == 3
 
 
