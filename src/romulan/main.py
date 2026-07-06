@@ -69,6 +69,19 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="hw_cmd", required=True)
 
+    def _add_common_args(p):
+        p.add_argument(
+            "--port",
+            default=None,
+            help="Serial port for the Pico (auto-detected if omitted)",
+        )
+        p.add_argument(
+            "--verbose",
+            "-v",
+            action="store_true",
+            help="Print hardware protocol messages (SEND/RECV trace)",
+        )
+
     # --- upload ---
     upload_parser = sub.add_parser(
         "upload",
@@ -79,11 +92,7 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
         type=Path,
         help="Path to the 32 KB ROM binary file",
     )
-    upload_parser.add_argument(
-        "--port",
-        default=None,
-        help="Serial port for the Pico (auto-detected if omitted)",
-    )
+    _add_common_args(upload_parser)
 
     # --- capture ---
     capture_parser = sub.add_parser(
@@ -96,11 +105,7 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
         default=500,
         help="Maximum number of cycles to capture (default: 500)",
     )
-    capture_parser.add_argument(
-        "--port",
-        default=None,
-        help="Serial port for the Pico (auto-detected if omitted)",
-    )
+    _add_common_args(capture_parser)
 
     # --- monitor ---
     monitor_parser = sub.add_parser(
@@ -119,11 +124,7 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
         dest="disable",
         help="Disable monitor output",
     )
-    monitor_parser.add_argument(
-        "--port",
-        default=None,
-        help="Serial port for the Pico (auto-detected if omitted)",
-    )
+    _add_common_args(monitor_parser)
 
     # --- reset ---
     reset_parser = sub.add_parser(
@@ -142,22 +143,14 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
         dest="release_reset",
         help="Release CPU from reset",
     )
-    reset_parser.add_argument(
-        "--port",
-        default=None,
-        help="Serial port for the Pico (auto-detected if omitted)",
-    )
+    _add_common_args(reset_parser)
 
     # --- request-addr ---
     addr_parser = sub.add_parser(
         "request-addr",
         help="Request the current CPU address",
     )
-    addr_parser.add_argument(
-        "--port",
-        default=None,
-        help="Serial port for the Pico (auto-detected if omitted)",
-    )
+    _add_common_args(addr_parser)
 
     return parser
 
@@ -177,7 +170,7 @@ def _handle_hardware(args: argparse.Namespace) -> None:
     port = _resolve_port(args.port)
 
     try:
-        with HardwareAPI(port) as api:
+        with HardwareAPI(port, verbose=args.verbose) as api:
             if cmd == "upload":
                 data = args.bin_path.read_bytes()
                 result = api.upload_rom(data)
