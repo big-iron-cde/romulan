@@ -15,19 +15,37 @@ ROM_BASE_ADDR = 0x8000  # ROM starts at CPU address $8000
 
 
 class InvalidInstructionError(Exception):
-    """Exception raised for instances of invalid instructions for the 65C02 system."""
+    """Raised when a byte sequence contains an undefined 65C02 opcode."""
 
     def __init__(self, message):
-        """Defines an instance of the custom exception class."""
+        """Initialize the error with a human-readable message.
+
+        Args:
+            message: Description of the invalid instruction or operand.
+        """
         super().__init__(message)
         self.message = message
 
     def __str__(self):
-        """Defines the default string method for instances of the class."""
+        """Return the error message.
+
+        Returns:
+            The message passed to the constructor.
+        """
         return self.message
 
 def cpu_to_offset(cpu_addr: int) -> int:
-    """Convert a CPU address ($8000-$FFFF) to a file offset (0-$7FFF)."""
+    """Convert a CPU address ($8000-$FFFF) to a file offset (0-$7FFF).
+
+    Args:
+        cpu_addr: A 65C02 address in the ROM region.
+
+    Returns:
+        The corresponding byte offset in a 32 KB ROM file.
+
+    Raises:
+        ValueError: If ``cpu_addr`` is outside ``$8000``–``$FFFF``.
+    """
     if not (ROM_BASE_ADDR <= cpu_addr <= 0xFFFF):
         raise ValueError(
             f"CPU address ${cpu_addr:04X} is outside the ROM region "
@@ -39,12 +57,23 @@ def cpu_to_offset(cpu_addr: int) -> int:
 def parse_hex_file(path: Path) -> dict[int, int]:
     """Parse an annotated hex dump file into a dict of CPU address -> byte.
 
-    Expected line format:
+    Expected line format::
+
         0x0000   0x18   @ CLC
         0x0001   0xA9   @ LDA 0x5
 
-    File addresses are in the range 0x0000-0x7FFF and are mapped to
-    CPU addresses by adding ROM_BASE_ADDR (0x8000).
+    File addresses are in the range ``0x0000``–``0x7FFF`` and are mapped to
+    CPU addresses by adding :data:`ROM_BASE_ADDR` (``0x8000``). Everything
+    after ``@`` on a line is treated as a comment and ignored.
+
+    Args:
+        path: Path to the annotated hex dump file.
+
+    Returns:
+        A mapping from CPU address to byte value.
+
+    Raises:
+        ValueError: If a line cannot be parsed or an address is out of range.
     """
     data: dict[int, int] = {}
     line_pattern = re.compile(
@@ -79,7 +108,22 @@ def parse_hex_file(path: Path) -> dict[int, int]:
 
 
 def build_rom(input_path: Path, output_path: Path) -> None:
-    """Parse a hex dump file and write a 32 KB ROM binary."""
+    """Parse a hex dump file and write a 32 KB ROM binary.
+
+    Unused bytes are filled with ``$EA`` (NOP). The reset and IRQ/BRK vectors
+    at ``$FFFC``–``$FFFF`` must be present in the input or the build fails.
+
+    Side effects:
+        Creates parent directories for ``output_path`` if needed, writes the
+        binary file, and prints a summary to stdout.
+
+    Args:
+        input_path: Path to the annotated hex dump file.
+        output_path: Destination path for the 32 KB ``.bin`` file.
+
+    Raises:
+        ValueError: If parsing fails or required vectors are missing.
+    """
     parsed = parse_hex_file(input_path)
 
     # Fill with NOPs ($EA) so any unintentionally-executed bytes are harmless.
@@ -119,7 +163,18 @@ def build_rom(input_path: Path, output_path: Path) -> None:
 
 
 def verify_instructions(*data: int) -> None:
-    """Check all entries in `data` are valid instructions."""
+    """Validate that byte values are legal 65C02 opcodes or operands.
+
+    Distinguishes undefined opcodes from immediate or address operands that
+    follow a valid instruction byte.
+
+    Args:
+        *data: One or more integer byte values (``0x00``–``0xFF``).
+
+    Raises:
+        InvalidInstructionError: If a value is out of range or is an undefined
+            opcode that is not a valid operand for the preceding instruction.
+    """
     invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
                             0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
                             0x62, 0x63, 0x6B, 0x73, 0x7B, 0x82, 0x83, 0x8B, 0x93,
