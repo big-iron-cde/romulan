@@ -31,5 +31,5 @@ jobs:
       - name: Run Error Handling Test Suite
         run: |
           echo "Running test files..."
-          pytest tests/test_main.py
-          pytest tests/test_error_processing.py
+          uv run pytest tests/test_main.py
+          uv run pytest tests/test_error_processing.py
