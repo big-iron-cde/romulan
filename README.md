@@ -6,7 +6,7 @@
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://big-iron-cde.github.io/romulan/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/big-iron-cde/romulan/blob/main/LICENSE)
 
-**Full documentation:** [big-iron-cde.github.io/romulan](https://romulan.big-iron.dev)
+**Full documentation:** [romulan.big-iron.dev](https://romulan.big-iron.dev)
 
 ## Features
 
