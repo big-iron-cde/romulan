@@ -9,43 +9,68 @@ File offset $7FFF = CPU address $FFFF
 import os
 import re
 import sys
-from typing import Dict, List
 from pathlib import Path
+from typing import Dict, List
 
 ROM_SIZE = 0x8000  # 32 KB
 ROM_BASE_ADDR = 0x8000  # ROM starts at CPU address $8000
 ERROR_COUNTER = 0  # Global counter for errors encountered during ROM build
 
 
-
 class InvalidInstructionError(Exception):
-    """Exception raised for instances of invalid instructions for the 65C02 system."""
+    """Raised when a byte sequence contains an undefined 65C02 opcode."""
 
     def __init__(self, message):
-        """Defines an instance of the custom exception class."""
+        """Initialize the error with a human-readable message.
+
+        Args:
+            message: Description of the invalid instruction or operand.
+        """
         super().__init__(message)
         self.message = message
 
     def __str__(self):
-        """Defines the default string method for instances of the class."""
+        """Return the error message.
+
+        Returns:
+            The message passed to the constructor.
+        """
         return self.message
 
 
 class SkippedInstructionError(Exception):
-    """Exception raised for instances of skipped instructions for the 65C02 system."""
+    """Raised when a required instruction address is missing from the ROM dump."""
 
     def __init__(self, message):
-        """Defines an instance of the custom exception class."""
+        """Initialize the error with a human-readable message.
+
+        Args:
+            message: Description of the skipped instruction address.
+        """
         super().__init__(message)
         self.message = message
 
     def __str__(self):
-        """Defines the default string method for instances of the class."""
+        """Return the error message.
+
+        Returns:
+            The message passed to the constructor.
+        """
         return self.message
 
 
 def cpu_to_offset(cpu_addr: int) -> int:
-    """Convert a CPU address ($8000-$FFFF) to a file offset (0-$7FFF)."""
+    """Convert a CPU address ($8000-$FFFF) to a file offset (0-$7FFF).
+
+    Args:
+        cpu_addr: A 65C02 address in the ROM region.
+
+    Returns:
+        The corresponding byte offset in a 32 KB ROM file.
+
+    Raises:
+        ValueError: If ``cpu_addr`` is outside ``$8000``–``$FFFF``.
+    """
     if not (ROM_BASE_ADDR <= cpu_addr <= 0xFFFF):
         raise ValueError(
             f"CPU address ${cpu_addr:04X} is outside the ROM region "
@@ -57,12 +82,23 @@ def cpu_to_offset(cpu_addr: int) -> int:
 def parse_hex_file(path: Path) -> dict[int, int]:
     """Parse an annotated hex dump file into a dict of CPU address -> byte.
 
-    Expected line format:
+    Expected line format::
+
         0x0000   0x18   @ CLC
         0x0001   0xA9   @ LDA 0x5
 
-    File addresses are in the range 0x0000-0x7FFF and are mapped to
-    CPU addresses by adding ROM_BASE_ADDR (0x8000).
+    File addresses are in the range ``0x0000``–``0x7FFF`` and are mapped to
+    CPU addresses by adding :data:`ROM_BASE_ADDR` (``0x8000``). Everything
+    after ``@`` on a line is treated as a comment and ignored.
+
+    Args:
+        path: Path to the annotated hex dump file.
+
+    Returns:
+        A mapping from CPU address to byte value.
+
+    Raises:
+        ValueError: If a line cannot be parsed or an address is out of range.
     """
     data: dict[int, int] = {}
     line_pattern = re.compile(r"^\s*0x([0-9A-Fa-f]+)\s+0x([0-9A-Fa-f]{2})")
@@ -93,7 +129,16 @@ def parse_hex_file(path: Path) -> dict[int, int]:
 
 
 def verify_instructions(data: List[int], error_list: List) -> None:
-    """Check all entries in `data` are valid instructions."""
+    """Validate opcode bytes and append errors instead of raising immediately.
+
+    Distinguishes undefined opcodes from immediate or address operands that
+    follow a valid instruction byte. Errors are appended to ``error_list`` and
+    :data:`ERROR_COUNTER` is incremented.
+
+    Args:
+        data: Byte values parsed from the ROM image.
+        error_list: List that receives human-readable error messages.
+    """
     invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
                             0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
                             0x62, 0x63, 0x6B, 0x73, 0x7B, 0x82, 0x83, 0x8B, 0x93,
@@ -111,32 +156,23 @@ def verify_instructions(data: List[int], error_list: List) -> None:
 
     global ERROR_COUNTER
 
-    # Loop through each byte in `data`
     for d in data:
-        # Check if the byte fits the expected range for an instruction or memory location
         if 0x00 <= d <= 0xFF:
-            # Compare d to all instructions in invalid_instructions list
             if d in invalid_instructions:
                 position = data.index(d)
-                # Compare data[position - 1] to all instructions requiring memory address instructions
-                # This looks for the instructions around the possible invalid inatruction
                 if (
                     data[position - 1] in instructions_with_immediate
                     or data[position - 1] in instructions_with_address
                 ):
                     continue
-                # Covers instructions that require 2 bytes of memory address instructions
                 elif (
                     position - 2 >= 0
                     and data[position - 2] in instructions_with_address
                 ):
                     continue
-                # Handles all invalid and in range instructions
-                # (those undefined in the opcode matrix and used in an opcode context)
                 else:
                     error_list.append(f"Invalid instruction: ${d} is undefined")
                     ERROR_COUNTER += 1
-        # Handles all data bytes outside the valid range of 0x00 - 0xFF
         else:
             error_list.append(
                 f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)"
@@ -145,71 +181,81 @@ def verify_instructions(data: List[int], error_list: List) -> None:
 
 
 def verify_instruction_order(data: List[int], error_list: List) -> None:
-    """Check that instructions are in the correct order and don't skip."""
-    # Makes sure the addresses are in order
+    """Check that file addresses are contiguous (no gaps before the vectors).
+
+    Args:
+        data: File-offset addresses from the parsed ROM dump.
+        error_list: List that receives human-readable error messages.
+    """
     sorted_data = sorted(data)
     global ERROR_COUNTER
-    # Iterates through the sorted list of addresses and checks for any skipped instructions
     for i in range(len(sorted_data) - 1):
         current = sorted_data[i]
         next_addr = sorted_data[i + 1]
-        # Stops the loop if a reset vector is reached since those are checked separately
         if current in (0x7FFC, 0x7FFD, 0x7FFE, 0x7FFF) or next_addr in (0x7FFC, 0x7FFD, 0x7FFE, 0x7FFF):
             break
-        # Logs any skipped instructions to the error list and increments the error counter
         if next_addr != current + 1:
             error_list.append(f"Skipped instruction: ${current + 1:04X} is missing")
             ERROR_COUNTER += 1
 
 
 def error_processing(data_dict: Dict[int, int]) -> List:
-    """Handle all error processing for the ROM file."""
-    # Pulls all bytes out of data_dict and puts them into a list for processing
+    """Run opcode and address-order validation on a parsed ROM dump.
+
+    Args:
+        data_dict: Mapping of CPU address to byte value from :func:`parse_hex_file`.
+
+    Returns:
+        A list of human-readable error messages (empty when validation passes).
+    """
     byte_list = list(data_dict.values())
-    # Adds all CPU addresses to a list for processing
     instruction_list = []
     for instruction in data_dict.keys():
-        # Subtracts the ROM_BASE_ADDR to get the instruction order
         new_instruction = instruction - ROM_BASE_ADDR
         instruction_list.append(new_instruction)
-    # Initializes an empty list to hold any errors found during instruction verification
     error_list_final = []
-    # Calls verify_instructions to check for invalid instructions and populate error list
     verify_instructions(data=byte_list, error_list=error_list_final)
-    # Calls verify_instruction_order to check for skipped instructions and populate error list
     verify_instruction_order(data=instruction_list, error_list=error_list_final)
     return error_list_final
 
 
 def build_rom(input_path: Path, output_path: Path) -> None:
-    """Parse a hex dump file and write a 32 KB ROM binary."""
+    """Parse a hex dump file and write a 32 KB ROM binary.
+
+    Runs opcode and address-order validation before writing. Unused bytes are
+    filled with ``$EA`` (NOP). The reset and IRQ/BRK vectors at ``$FFFC``–``$FFFF``
+    must be present in the input or the build fails.
+
+    Side effects:
+        Resets :data:`ERROR_COUNTER`, may print errors and call ``sys.exit(1)``,
+        creates parent directories for ``output_path``, writes the binary file,
+        and prints a summary to stdout.
+
+    Args:
+        input_path: Path to the annotated hex dump file.
+        output_path: Destination path for the 32 KB ``.bin`` file.
+
+    Raises:
+        ValueError: If parsing fails or required vectors are missing.
+    """
     global ERROR_COUNTER
-    ERROR_COUNTER = 0  # Reset the error counter for each build
+    ERROR_COUNTER = 0
     parsed = parse_hex_file(input_path)
 
-    # ─── Error processing ────────────────────────────────────────────────
-    # Runs the error processing function to compile a list of errors to print
     master_error_list = error_processing(parsed)
-    # If any errors were encountered, print them and exit with a non-zero status.
     if ERROR_COUNTER > 0:
-        # Prints the number of errors encountered
         print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
-        # Prints each error in the list
         for error in master_error_list:
             print(f"  {error}")
-        # Indicates the build failed and exits with a non-zero status code.
         print("ROM build failed due to errors.")
         sys.exit(1)
 
-    # Fill with NOPs ($EA) so any unintentionally-executed bytes are harmless.
     rom = bytearray([0xEA] * ROM_SIZE)
 
-    # Write parsed bytes into ROM at CPU addresses
     for cpu_addr, byte_val in parsed.items():
         offset = cpu_to_offset(cpu_addr)
         rom[offset] = byte_val
 
-    # Validate required vectors
     required_vectors = {
         0xFFFC: "reset vector (low)",
         0xFFFD: "reset vector (high)",
@@ -224,7 +270,6 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     if missing:
         raise ValueError("ROM is missing required vectors:\n" + "\n".join(missing))
 
-    # Write the file
     os.makedirs(output_path.parent, exist_ok=True)
     with open(output_path, "wb") as fh:
         fh.write(rom)
@@ -232,4 +277,3 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     print(f"Wrote {len(rom)} bytes to {output_path}")
     print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
     print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
-    print(cpu_to_offset)

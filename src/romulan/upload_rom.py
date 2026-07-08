@@ -1,24 +1,13 @@
 #!/usr/bin/env python3
-"""
-upload-rom.py — push a 32 KB ROM image to the Pico-as-ROM firmware.
+"""Plain-text ROM upload for the Pico-as-ROM 65C02 firmware.
 
-Usage:
-    python3 upload-rom.py [PORT] [BIN]
+Uploads a 32 KB ROM image over USB serial using the firmware's ``loadbin``
+handshake: the host sends ``loadbin``, the Pico responds with
+``OK send 32768 bytes``, the host streams 32,768 raw bytes, and the Pico
+acknowledges with ``loaded 32768 bytes``.
 
-Defaults:
-    PORT = /dev/ttyACM0 (or auto-detected)
-    BIN  = bin/rom.bin
-
-The firmware exposes a tiny binary upload protocol on its USB-CDC port:
-
-    host → "loadbin\n"
-    pico → "OK send 32768 bytes\n"
-    host → <32768 raw bytes>
-    pico → "loaded 32768 bytes\n"
-
-This script wraps that, plus optional ROM-emulator toggle and reset pulse
-so the CPU restarts on the new image. It tries to be polite — leaves the
-ROM emulator and CPU in whatever state you had them in before.
+Also handles CPU reset sequencing and ROM-emulator toggling so the CPU
+restarts cleanly on the new image.
 """
 
 from __future__ import annotations
@@ -45,7 +34,17 @@ RPI_VID = 0x2E8A
 
 
 def find_pico_port() -> str:
-    """Auto-detect a Raspberry Pi Pico serial port."""
+    """Auto-detect a Raspberry Pi Pico serial port.
+
+    Tries USB vendor ID ``0x2E8A`` (Raspberry Pi) first, then falls back to
+    common port name patterns on Linux, macOS, and Windows.
+
+    Returns:
+        The device path of the detected Pico (e.g. ``/dev/ttyACM0``).
+
+    Raises:
+        RuntimeError: If zero or more than one matching port is found.
+    """
     # First try pyserial's list_ports with VID filter
     ports = list(serial.tools.list_ports.comports())
     pico_ports = [
@@ -94,7 +93,21 @@ def find_pico_port() -> str:
 
 
 def read_until(ser: serial.Serial, needle: str, timeout: float = 3.0) -> str:
-    """Read lines from `ser` until one contains `needle` or we time out."""
+    """Read from a serial port until a substring appears or time runs out.
+
+    Non-empty lines received are echoed to stdout prefixed with ``<<``.
+
+    Args:
+        ser: An open :class:`serial.Serial` connection.
+        needle: Substring to search for in the accumulated receive buffer.
+        timeout: Maximum wait time in seconds. Defaults to ``3.0``.
+
+    Returns:
+        The full receive buffer once ``needle`` is found.
+
+    Raises:
+        TimeoutError: If ``needle`` is not seen before the deadline.
+    """
     deadline = time.time() + timeout
     buf = ""
     while time.time() < deadline:
@@ -111,6 +124,22 @@ def read_until(ser: serial.Serial, needle: str, timeout: float = 3.0) -> str:
 
 
 def upload(port: str, path: Path) -> None:
+    """Upload a 32 KB ROM image via the plain-text ``loadbin`` protocol.
+
+    Side effects:
+        Opens the serial port at 115200 baud, asserts CPU reset (``r0``),
+        disables ROM emulation (``roms``), streams the binary, re-enables ROM
+        and clock (``rom``, ``c100``), releases reset (``r1``), captures ~5 s
+        of live output, then closes the port.
+
+    Args:
+        port: Serial device path for the Pico.
+        path: Path to the ROM binary; must be exactly :data:`ROM_SIZE` bytes.
+
+    Raises:
+        SystemExit: If ``path`` is not exactly 32 KB (via ``sys.exit``).
+        TimeoutError: If the firmware does not respond during handshake.
+    """
     data = path.read_bytes()
     if len(data) != ROM_SIZE:
         sys.exit(
@@ -176,6 +205,15 @@ def upload(port: str, path: Path) -> None:
 
 
 def main() -> None:
+    """CLI entry point for standalone ``upload-rom.py`` usage.
+
+    Accepts optional ``[PORT] [BIN]`` arguments; auto-detects the port and
+    defaults to ``bin/rom.bin`` when omitted.
+
+    Side effects:
+        Delegates to :func:`upload`, which opens the serial port and drives
+        the Pico firmware.
+    """
     args = sys.argv[1:]
     port = args[0] if len(args) >= 1 else find_pico_port()
     binp = Path(args[1]) if len(args) >= 2 else Path(__file__).parent / "bin" / "rom.bin"

@@ -1,0 +1,8 @@
+<div class="sidebar-tree">
+  <ul>
+    <li class="toctree-l1{% if pagename == 'index' %} current current-page{% endif %}">
+      <a class="reference internal{% if pagename == 'index' %} current{% endif %}" href="{{ pathto('index') }}">Home</a>
+    </li>
+  </ul>
+  {{ furo_navigation_tree }}
+</div>
