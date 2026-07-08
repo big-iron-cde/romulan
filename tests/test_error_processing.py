@@ -2,7 +2,7 @@
 
 import pytest
 
-from romulan.build_rom import error_processing, ERROR_COUNTER
+from romulan.build_rom import error_processing
 
 
 # -----------------------------
