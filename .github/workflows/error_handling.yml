@@ -25,8 +25,8 @@ jobs:
       - name: Install Dependencies
         run: |
           echo "Installing necessary dependencies..."
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
 
       - name: Run Error Handling Test Suite
         run: |
