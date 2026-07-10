@@ -1,4 +1,19 @@
-"""Hardware API v1 — framed JSON serial protocol for the Pico-as-ROM 65C02 system."""
+"""High-level client for the Pico-as-ROM 65C02 hardware over the v1 serial protocol.
+
+This module provides :class:`HardwareAPI`, a client-side wrapper around the
+framed JSON protocol implemented by the Pico firmware. It handles the
+low-level ENQ/STX/ACK/EOT framing, encodes commands built by
+:mod:`romulan.protocol_v1`, and exposes friendly methods for the common
+operations: querying the current CPU address, asserting/releasing reset,
+toggling the ASCII monitor, reading status, uploading a ROM image, and
+capturing bus cycles.
+
+Opening a :class:`HardwareAPI` immediately opens the underlying serial port.
+The class supports the context-manager protocol so the port is always closed::
+
+    with HardwareAPI("/dev/ttyACM0") as api:
+        api.upload_rom(rom_bytes)
+"""
 
 from __future__ import annotations
 
@@ -42,16 +57,35 @@ class HardwareAPIError(Exception):
 
 @dataclass
 class CaptureResult:
-    """Result of a bus capture (read until STP)."""
+    """Result of a bus capture (read until STP).
+
+    Attributes:
+        reason: Why the capture stopped (e.g. ``"stp"`` or ``"max_cycles"``).
+        cycles: One dict per captured bus cycle, each with ``seq``, ``addr``,
+            ``data``, and ``rw`` keys.
+    """
 
     reason: str
     cycles: list[dict[str, Any]] = field(default_factory=list)
 
     def __repr__(self) -> str:
+        """Return a concise debug representation.
+
+        Returns:
+            A string showing the stop reason and cycle count.
+        """
         return f"CaptureResult(reason={self.reason!r}, cycles={len(self.cycles)})"
 
     @classmethod
     def from_read_result(cls, result: ReadResult) -> CaptureResult:
+        """Build a :class:`CaptureResult` from a protocol :class:`~romulan.protocol_v1.ReadResult`.
+
+        Args:
+            result: The parsed read result returned by the capture loop.
+
+        Returns:
+            A :class:`CaptureResult` with each cycle flattened into a plain dict.
+        """
         return cls(
             reason=result.reason,
             cycles=[
@@ -67,9 +101,31 @@ class CaptureResult:
 
 
 class HardwareAPI:
-    """Context-manager compatible hardware API for Pico-as-ROM firmware v1."""
+    """Context-manager compatible hardware API for Pico-as-ROM firmware v1.
+
+    Each instance owns a single serial connection to the Pico. The connection
+    is opened as soon as the object is constructed, and closed by
+    :meth:`close` or on exit from a ``with`` block.
+
+    Attributes:
+        port: The serial device path the client is connected to.
+        baudrate: The serial baud rate in use.
+        timeout: Default per-read timeout in seconds.
+        verbose: When ``True``, protocol traffic is logged to stderr.
+    """
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 30.0, verbose: bool = False):
+        """Open a serial connection to the Pico and prepare it for commands.
+
+        Side effects:
+            Opens the serial port immediately and flushes any pending input.
+
+        Args:
+            port: Serial device path (e.g. ``/dev/ttyACM0``).
+            baudrate: Serial baud rate. Defaults to ``115200``.
+            timeout: Default read timeout in seconds. Defaults to ``30.0``.
+            verbose: If ``True``, log SEND/RECV protocol traffic to stderr.
+        """
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -78,6 +134,7 @@ class HardwareAPI:
         self._open()
 
     def _open(self) -> None:
+        """Open the serial port, settle briefly, and flush stale input."""
         self._log(f"Opened {self.port} @ {self.baudrate}")
         self._ser = serial.Serial(
             self.port,
@@ -89,24 +146,39 @@ class HardwareAPI:
             self._ser.reset_input_buffer()
 
     def close(self) -> None:
+        """Close the serial port if it is open.
+
+        Safe to call multiple times; subsequent calls are no-ops.
+        """
         if self._ser is not None:
             self._log("Closed")
             self._ser.close()
             self._ser = None
 
     def __enter__(self) -> HardwareAPI:
+        """Enter a ``with`` block and return this client."""
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit a ``with`` block, closing the serial port."""
         self.close()
 
     @property
     def ser(self) -> serial.Serial:
+        """The live :class:`serial.Serial` connection.
+
+        Returns:
+            The open serial connection.
+
+        Raises:
+            HardwareAPIError: If the port has already been closed.
+        """
         if self._ser is None:
             raise HardwareAPIError("Serial port is closed")
         return self._ser
 
     def _log(self, msg: str) -> None:
+        """Write a trace message to stderr when ``verbose`` is enabled."""
         if self.verbose:
             print(f"[HW] {msg}", file=sys.stderr, flush=True)
 
@@ -213,6 +285,16 @@ class HardwareAPI:
         self.ser.reset_input_buffer()
 
     def request_addr(self) -> int:
+        """Ask the firmware for the address currently on the CPU bus.
+
+        Returns:
+            The current CPU address as an integer.
+
+        Raises:
+            HardwareAPIError: If the response is missing the ``addr`` field
+                or the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
         self._log("CALL request_addr()")
         resp = self._exchange_json(build_request("request_addr", req_id=self._next_id()))
         addr = resp.get("addr")
@@ -223,6 +305,20 @@ class HardwareAPI:
         return addr_int
 
     def reset(self, assert_reset: bool) -> None:
+        """Assert or release the 65C02 RESET line.
+
+        Side effects:
+            Changes the CPU run state: asserting reset halts the CPU, while
+            releasing it lets the CPU start executing from its reset vector.
+
+        Args:
+            assert_reset: ``True`` to hold the CPU in reset, ``False`` to
+                release it.
+
+        Raises:
+            HardwareAPIError: If the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
         self._log(f"CALL reset(assert_reset={assert_reset})")
         self._exchange_json(
             build_request("reset", req_id=self._next_id(), assert_reset=assert_reset)
@@ -230,6 +326,19 @@ class HardwareAPI:
         self._log("RET reset")
 
     def monitor(self, enable: bool) -> None:
+        """Enable or disable the firmware's unstructured ASCII monitor output.
+
+        The ASCII monitor must be disabled before framed operations such as
+        :meth:`upload_rom` and :meth:`read_until_stp`, otherwise its free-form
+        text would corrupt the framed protocol stream.
+
+        Args:
+            enable: ``True`` to turn the monitor on, ``False`` to turn it off.
+
+        Raises:
+            HardwareAPIError: If the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
         self._log(f"CALL monitor(enable={enable})")
         self._exchange_json(
             build_request("monitor", req_id=self._next_id(), enable=enable)
@@ -237,10 +346,41 @@ class HardwareAPI:
         self._log("RET monitor")
 
     def status(self) -> StatusResponse:
+        """Query the firmware for its current status.
+
+        Returns:
+            A :class:`~romulan.protocol_v1.StatusResponse` describing the
+            clock frequency, ROM/reset/monitor state, and last bus address.
+
+        Raises:
+            HardwareAPIError: If the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
         resp = self._exchange_json(build_request("status", req_id=self._next_id()))
         return parse_status(resp)
 
     def upload_rom(self, data: bytes) -> dict[str, Any]:
+        """Upload a full 32 KB ROM image to the Pico in a begin/chunk/commit sequence.
+
+        The image is sent as base64-encoded chunks and committed at the end.
+        The reset vector is reported back by the firmware after commit.
+
+        Side effects:
+            Disables the ASCII monitor and flushes serial input before
+            transferring, so the framed protocol is not corrupted.
+
+        Args:
+            data: The ROM image; must be exactly ``ROM_SIZE`` (32 KB) bytes.
+
+        Returns:
+            A dict with keys ``ok``, ``bytes`` (bytes committed),
+            ``reset_vector``, and ``expected`` (expected total size).
+
+        Raises:
+            ValueError: If ``data`` is not exactly ``ROM_SIZE`` bytes.
+            HardwareAPIError: If a chunk stalls or the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
         self._log(f"CALL upload_rom(size={len(data)})")
         if len(data) != ROM_SIZE:
             raise ValueError(f"ROM must be exactly {ROM_SIZE} bytes, got {len(data)}")
@@ -294,6 +434,30 @@ class HardwareAPI:
         frame_timeout: float | None = None,
     ) -> CaptureResult:
         resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
+        """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
+
+        Streams ``cycle`` events from the firmware and stops on the terminating
+        ``done`` event (reached when the CPU halts via STP or ``max_cycles`` is
+        reached).
+
+        Side effects:
+            Disables the ASCII monitor and flushes serial input before
+            starting the capture.
+
+        Args:
+            max_cycles: Maximum number of bus cycles to capture before the
+                firmware stops. Defaults to ``10000``.
+           frame_timeout: Per-frame read timeout in seconds while waiting for
+                cycle/done events. Defaults to :attr:`self.timeout`.
+
+        Returns:
+            A :class:`CaptureResult` with the stop reason and captured cycles.
+
+        Raises:
+            HardwareAPIError: If the read is rejected or an unexpected frame
+                arrives.
+            TimeoutError: If the Pico stops sending frames before ``done``.
+        """
         self._log(f"CALL read_until_stp(max_cycles={max_cycles})")
         self.monitor(enable=False)
         self._drain_input()
@@ -334,6 +498,21 @@ class HardwareAPI:
 
 
 def open_hardware_api(port: str | None = None) -> HardwareAPI:
+    """Open a :class:`HardwareAPI`, auto-detecting the Pico port if needed.
+
+    Side effects:
+        Opens the serial port via :class:`HardwareAPI`.
+
+    Args:
+        port: Explicit serial device path. If ``None``, the port is
+            auto-detected with :func:`~romulan.upload_rom.find_pico_port`.
+
+    Returns:
+        A connected :class:`HardwareAPI` instance.
+
+    Raises:
+        HardwareAPIError: If no Pico serial port can be found.
+    """
     resolved = port or find_pico_port()
     if not resolved:
         raise HardwareAPIError("No Pico serial port found")
