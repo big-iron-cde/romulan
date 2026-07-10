@@ -76,6 +76,12 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
             help="Serial port for the Pico (auto-detected if omitted)",
         )
         p.add_argument(
+            "--timeout",
+            type=float,
+            default=30.0,
+            help="Serial/frame timeout in seconds (default: 30.0)",
+        )
+        p.add_argument(
             "--verbose",
             "-v",
             action="store_true",
@@ -170,7 +176,7 @@ def _handle_hardware(args: argparse.Namespace) -> None:
     port = _resolve_port(args.port)
 
     try:
-        with HardwareAPI(port, verbose=args.verbose) as api:
+        with HardwareAPI(port, timeout=args.timeout, verbose=args.verbose) as api:
             if cmd == "upload":
                 data = args.bin_path.read_bytes()
                 result = api.upload_rom(data)

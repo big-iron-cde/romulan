@@ -168,6 +168,27 @@ class TestReadUntilStp:
         assert result.reason == "stp"
         assert len(result.cycles) == 1
 
+    def test_uses_instance_timeout_when_no_frame_timeout(self, mock_serial):
+        """read_until_stp defaults frame_timeout to self.timeout."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
+
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"read","until":"stp","max_cycles":10}',
+        )
+
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"type":"event","event":"done","ok":true,"reason":"stp","cycles":0,"addr":"8000"}',
+        )
+
+        api = _make_api(mock_serial)
+        api.timeout = 99.0
+        result = api.read_until_stp(max_cycles=10)
+        assert result.reason == "stp"
+
 
 # ---------------------------------------------------------------------------
 # CaptureResult

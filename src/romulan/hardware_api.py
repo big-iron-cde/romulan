@@ -34,7 +34,6 @@ ACK = 0x06
 EOT = 0x04
 NACK = 0x15
 
-READ_FRAME_TIMEOUT = 12.0
 
 
 class HardwareAPIError(Exception):
@@ -70,7 +69,7 @@ class CaptureResult:
 class HardwareAPI:
     """Context-manager compatible hardware API for Pico-as-ROM firmware v1."""
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 3.0, verbose: bool = False):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 30.0, verbose: bool = False):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -140,7 +139,7 @@ class HardwareAPI:
         self._write_byte(ACK)
 
         buf = bytearray()
-        deadline = time.time() + max(wait, 30.0)
+        deadline = time.time() + wait
         while time.time() < deadline:
             chunk = self.ser.read(256)
             if not chunk:
@@ -292,8 +291,9 @@ class HardwareAPI:
     def read_until_stp(
         self,
         max_cycles: int = 10000,
-        frame_timeout: float = READ_FRAME_TIMEOUT,
+        frame_timeout: float | None = None,
     ) -> CaptureResult:
+        resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
         self._log(f"CALL read_until_stp(max_cycles={max_cycles})")
         self.monitor(enable=False)
         self._drain_input()
@@ -313,7 +313,7 @@ class HardwareAPI:
         result = ReadResult(ok=False, reason="unknown")
 
         while True:
-            msg = self._recv_json_frame(timeout=frame_timeout)
+            msg = self._recv_json_frame(timeout=resolved_timeout)
             if msg.get("type") == "event" and msg.get("event") == "cycle":
                 cycles.append(parse_cycle_event(msg))
             elif msg.get("type") == "event" and msg.get("event") == "done":

@@ -81,6 +81,9 @@ uv run romulan hardware upload bin/rom.bin --port /dev/ttyACM0
 # Capture CPU bus cycles until STP or max cycles
 uv run romulan hardware capture --max-cycles 500
 
+# Use a longer timeout for slow operations (e.g. large uploads or long captures)
+uv run romulan hardware capture --max-cycles 500 --timeout 45
+
 # Hold CPU in reset
 uv run romulan hardware reset --assert
 
@@ -140,9 +143,10 @@ At least one of `--build` or `--upload` is required, but `--upload` can only be 
 | `hardware reset` | `--assert \| --release [--port] [-v]` | Hold or release the CPU reset line |
 | `hardware request-addr` | `[--port] [-v]` | Request the current CPU address |
 
-| Flag | Description |
-|------|-------------|
-| `--verbose`, `-v` | Print every JSON message sent and received over the serial protocol |
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--verbose`, `-v` | Print every JSON message sent and received over the serial protocol | — |
+| `--timeout` | Serial/frame timeout in seconds (applies to all hardware commands) | `30.0` |
 
 #### Verbose example
 
