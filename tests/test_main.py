@@ -176,6 +176,30 @@ class TestFindPicoPort:
             find_pico_port()
 
 
+class TestHardwareCapture:
+    @patch("romulan.hardware_api.HardwareAPI")
+    def test_capture_cli(self, mock_hw_cls: MagicMock) -> None:
+        """The capture subcommand forwards --max-cycles and prints results."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        result = MagicMock()
+        result.reason = "stp"
+        result.cycles = [{"seq": 1, "addr": 0x8000, "data": 0x18, "rw": "read"}]
+        mock_api.read_until_stp.return_value = result
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "capture", "--port", "/dev/ttyFAKE", "--max-cycles", "500"],
+        ):
+            main()
+
+        mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", verbose=False)
+        mock_api.read_until_stp.assert_called_once_with(max_cycles=500)
+
+
 class TestHardwareVerbose:
     @patch("romulan.hardware_api.HardwareAPI")
     def test_verbose_flag_passed_to_api(self, mock_hw_cls: MagicMock) -> None:

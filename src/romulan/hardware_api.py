@@ -203,6 +203,7 @@ class HardwareAPI:
 
     def _write_byte(self, value: int) -> None:
         self.ser.write(bytes([value]))
+        self.ser.flush()
 
     def _read_frame_payload(self, timeout: float | None = None) -> bytes:
         wait = self.timeout if timeout is None else timeout
@@ -214,14 +215,14 @@ class HardwareAPI:
         buf = bytearray()
         deadline = time.time() + max(wait, 30.0)
         while time.time() < deadline:
-            chunk = self.ser.read(256)
-            if not chunk:
+            b = self.ser.read(1)
+            if not b:
                 continue
-            for byte in chunk:
-                if byte == EOT:
-                    self._write_byte(ACK)
-                    return bytes(buf)
-                buf.append(byte)
+            byte = b[0]
+            if byte == EOT:
+                self._write_byte(ACK)
+                return bytes(buf)
+            buf.append(byte)
         self._log("ERROR: timed out waiting for EOT in response payload")
         raise TimeoutError("timed out waiting for EOT in response payload")
 
