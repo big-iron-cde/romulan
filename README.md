@@ -79,6 +79,12 @@ with HardwareAPI("/dev/ttyACM0") as api:
     capture = api.read_until_stp(max_cycles=500)
     print(capture.reason, len(capture.cycles))
 ```
+
+### Annotated hex format
+
+Each line is `address`, `byte`, and an optional `@ comment`:
+
+```text
 0x0000   0x18   @ CLC
 0x0001   0xA9   @ LDA 0x05
 0x0002   0x05
