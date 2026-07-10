@@ -1,19 +1,20 @@
 """Test cases for romulan.build-rom.verify_instructions."""
 
-
 import pytest
 
-from romulan.build_rom import InvalidInstructionError, verify_instructions
+from romulan.build_rom import verify_instructions
 
 
 # -----------------------------
 # RANGE TESTS
 # -----------------------------
 
+
 @pytest.mark.range
 def test_out_of_range() -> None:
     """Ensures values outside 0x00–0xFF or invalid hex are rejected."""
     out_of_range_list = ["0xFZ", "0x100", "0x-01"]
+    valid_hex_list = []
 
     for item in out_of_range_list:
         # Cleans up the hex code
@@ -24,11 +25,12 @@ def test_out_of_range() -> None:
             # Python should raise ValueError before verify_instructions is called
             with pytest.raises(ValueError):
                 int(clean_hex, 16)
-        # Checks values within range of using the 16 values for the hex code
         else:
-            value = int(clean_hex, 16)
-            with pytest.raises(InvalidInstructionError):
-                verify_instructions(value)
+            valid_hex_list.append(int(clean_hex, 16))
+
+    error_list = []
+    verify_instructions(data=valid_hex_list, error_list=error_list)
+    assert len(error_list) == len(valid_hex_list)
 
 
 @pytest.mark.range
@@ -36,24 +38,27 @@ def test_in_range() -> None:
     """Ensures valid numeric values inside 0x00–0xFF are accepted."""
     in_range_list = [0xDA, 0x3E, 0xF5]
 
-    # An error should not be raised
-    for item in in_range_list:
-        verify_instructions(item)
+    # No errors should be raised
+    error_list = []
+    verify_instructions(data=in_range_list, error_list=error_list)
+    assert len(error_list) == 0
 
 
 # -----------------------------
 # OPCODE VALIDITY TESTS
 # -----------------------------
 
+
 @pytest.mark.validity
 def test_invalid_opcodes() -> None:
-    """Ensures invalid opcodes raise an InvalidInstructionError."""
+    """Ensures invalid opcodes are flagged as errors."""
     invalid_opcodes_list = [0x63, 0xFC, 0x1B]
 
-    # Checks all opcodes in the list, should raise an error
-    for item in invalid_opcodes_list:
-        with pytest.raises(InvalidInstructionError):
-            verify_instructions(item)
+    # Checks all opcodes in the list, should produce an error for each invalid opcode
+    error_list = []
+    verify_instructions(data=invalid_opcodes_list, error_list=error_list)
+    # Checks that the error list contains three errors, meaning three invalid opcodes were found
+    assert len(error_list) == 3
 
 
 def test_valid_opcodes() -> None:
@@ -61,13 +66,15 @@ def test_valid_opcodes() -> None:
     valid_opcodes_list = [0xFF, 0x59, 0xA9]
 
     # Checks all opcodes in the list, should not raise an error
-    for item in valid_opcodes_list:
-        verify_instructions(item)
+    error_list = []
+    verify_instructions(data=valid_opcodes_list, error_list=error_list)
+    assert len(error_list) == 0
 
 
 # -----------------------------
 # MEMORY / IMMEDIATE TESTS
 # -----------------------------
+
 
 @pytest.mark.memory
 def test_immediate_memory() -> None:
@@ -80,7 +87,9 @@ def test_immediate_memory() -> None:
 
     # Checks all lists of opcodes and memory instructions, should not raise an error
     for instruction_list in immediate_list:
-        verify_instructions(*instruction_list)
+        error_list = []
+        verify_instructions(data=instruction_list, error_list=error_list)
+        assert len(error_list) == 0
 
 
 def test_addressing_mode() -> None:
@@ -93,4 +102,6 @@ def test_addressing_mode() -> None:
 
     # Checks all lists of opcodes and memory instructions, should not raise an error
     for address_list in addressing_list:
-        verify_instructions(*address_list)
+        error_list = []
+        verify_instructions(data=address_list, error_list=error_list)
+        assert len(error_list) == 0
