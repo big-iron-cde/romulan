@@ -55,6 +55,11 @@ The `--port` flag is optional when exactly one Pico is connected. Add `--verbose
 ```bash
 uv run romulan hardware upload bin/rom.bin
 uv run romulan hardware capture --max-cycles 500
+
+# Use a longer timeout for slow operations (e.g. large uploads or long captures)
+uv run romulan hardware capture --max-cycles 500 --timeout 45
+
+# Hold CPU in reset
 uv run romulan hardware reset --assert
 uv run romulan hardware reset --release
 uv run romulan hardware monitor --disable
@@ -74,21 +79,83 @@ with HardwareAPI("/dev/ttyACM0") as api:
     capture = api.read_until_stp(max_cycles=500)
     print(capture.reason, len(capture.cycles))
 ```
+0x0000   0x18   @ CLC
+0x0001   0xA9   @ LDA 0x05
+0x0002   0x05
+0x0003   0x8D   @ STA $4000
+0x0004   0x00
+0x0005   0x40
+...
+0x7FFC   0x00   @ Reset vector (low)
+0x7FFD   0x80   @ Reset vector (high)
+0x7FFE   0x00   @ IRQ/BRK vector (low)
+0x7FFF   0x80   @ IRQ/BRK vector (high)
+```
 
-## Hardware API
+- **File addresses** (`0x0000`–`0x7FFF`) map to **CPU addresses** `$8000`–`$FFFF`
+- **Comments** are optional — everything after `@` is ignored
+- **Vectors** at `0x7FFC`–`0x7FFF` are **required** — the builder will reject images without them
+
+## CLI Reference
+
+### Standard CLI
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `input` | Path to the annotated hex dump file (required with `--build`) | — |
+| `--build` | Build a `.bin` ROM image from the input file | — |
+| `--upload` | Upload the ROM image to the Pico | — |
+| `-o, --output` | Output ROM binary path | `bin/rom.bin` |
+| `--port` | Serial port for the Pico (auto-detected if omitted) | Auto-detect |
+
+At least one of `--build` or `--upload` is required, but `--upload` can only be used after a successful `--build` or if a valid ROM binary already exists at the output path.
+
+### Hardware API
 
 Romulan speaks the Piclone firmware's **v1 JSON protocol** over USB-CDC at 115200 baud. Each transaction uses byte-level framing (ENQ → STX → ACK → payload → EOT → ACK/NACK); all payloads include `"v": 1`.
 
-| Command | Purpose |
-|---------|---------|
-| `upload_rom` | Upload 32 KB ROM (begin / chunk / commit) |
-| `reset` | Assert or release CPU reset |
-| `monitor` | Enable or disable ASCII bus monitor |
-| `request_addr` | Read current CPU address |
-| `read` | Capture bus cycles until STP or max cycles |
-| `status` | Query firmware state |
+
+| Subcommand | Arguments | Description |
+|------------|-----------|-------------|
+| `hardware upload` | `<bin_path> [--port] [-v]` | Upload a ROM binary via the framed protocol |
+| `hardware capture` | `--max-cycles <N> [--port] [-v]` | Capture CPU bus cycles until STP or max cycles reached |
+| `hardware monitor` | `--enable \| --disable [--port] [-v]` | Toggle unstructured ASCII monitor output |
+| `hardware reset` | `--assert \| --release [--port] [-v]` | Hold or release the CPU reset line |
+| `hardware request-addr` | `[--port] [-v]` | Request the current CPU address |
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--verbose`, `-v` | Print every JSON message sent and received over the serial protocol | — |
+| `--timeout` | Serial/frame timeout in seconds (applies to all hardware commands) | `30.0` |
 
 Full firmware-side protocol reference: [Piclone Hardware API docs](https://big-iron-cde.github.io/piclone/hardware-api.html).
+
+#### Verbose example
+
+```bash
+$ uv run romulan hardware request-addr --verbose
+[HW] Opened /dev/ttyACM0 @ 115200
+[HW] CALL request_addr()
+[HW] SEND: {"cmd": "request_addr"}
+[HW] RECV: {"addr": 32768}
+[HW] RET request_addr -> 32768
+Current CPU address: 0x8000
+```
+
+## Architecture
+
+### Memory Map
+
+The 32 KB ROM image maps directly to the 65C02 address space:
+
+| File Offset | CPU Address | Purpose |
+|-------------|-------------|---------|
+| `0x0000` | `$8000` | Start of ROM |
+| `0x7FFC` | `$FFFC` | Reset vector (low byte) |
+| `0x7FFD` | `$FFFD` | Reset vector (high byte) |
+| `0x7FFE` | `$FFFE` | IRQ/BRK vector (low byte) |
+| `0x7FFF` | `$FFFF` | IRQ/BRK vector (high byte) |
+
 
 ## Documentation
 

@@ -193,7 +193,7 @@ class TestHardwareVerbose:
         ):
             main()
 
-        mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", verbose=True)
+        mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=30.0, verbose=True)
 
     @patch("romulan.hardware_api.HardwareAPI")
     def test_verbose_false_by_default(self, mock_hw_cls: MagicMock) -> None:
@@ -211,4 +211,22 @@ class TestHardwareVerbose:
         ):
             main()
 
-        mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", verbose=False)
+        mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=30.0, verbose=False)
+
+    @patch("romulan.hardware_api.HardwareAPI")
+    def test_timeout_flag_passed_to_api(self, mock_hw_cls: MagicMock) -> None:
+        """The --timeout flag is forwarded to HardwareAPI."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.request_addr.return_value = 0x8000
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "request-addr", "--port", "/dev/ttyFAKE", "--timeout", "45"],
+        ):
+            main()
+
+        mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=False)

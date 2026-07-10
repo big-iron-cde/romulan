@@ -49,7 +49,6 @@ ACK = 0x06
 EOT = 0x04
 NACK = 0x15
 
-READ_FRAME_TIMEOUT = 12.0
 
 
 class HardwareAPIError(Exception):
@@ -115,7 +114,7 @@ class HardwareAPI:
         verbose: When ``True``, protocol traffic is logged to stderr.
     """
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 3.0, verbose: bool = False):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 30.0, verbose: bool = False):
         """Open a serial connection to the Pico and prepare it for commands.
 
         Side effects:
@@ -124,7 +123,7 @@ class HardwareAPI:
         Args:
             port: Serial device path (e.g. ``/dev/ttyACM0``).
             baudrate: Serial baud rate. Defaults to ``115200``.
-            timeout: Default read timeout in seconds. Defaults to ``3.0``.
+            timeout: Default read timeout in seconds. Defaults to ``30.0``.
             verbose: If ``True``, log SEND/RECV protocol traffic to stderr.
         """
         self.port = port
@@ -212,7 +211,7 @@ class HardwareAPI:
         self._write_byte(ACK)
 
         buf = bytearray()
-        deadline = time.time() + max(wait, 30.0)
+        deadline = time.time() + wait
         while time.time() < deadline:
             chunk = self.ser.read(256)
             if not chunk:
@@ -432,8 +431,9 @@ class HardwareAPI:
     def read_until_stp(
         self,
         max_cycles: int = 10000,
-        frame_timeout: float = READ_FRAME_TIMEOUT,
+        frame_timeout: float | None = None,
     ) -> CaptureResult:
+        resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
         """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
 
         Streams ``cycle`` events from the firmware and stops on the terminating
@@ -447,8 +447,8 @@ class HardwareAPI:
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
                 firmware stops. Defaults to ``10000``.
-            frame_timeout: Per-frame read timeout in seconds while waiting for
-                cycle/done events. Defaults to :data:`READ_FRAME_TIMEOUT`.
+           frame_timeout: Per-frame read timeout in seconds while waiting for
+                cycle/done events. Defaults to :attr:`self.timeout`.
 
         Returns:
             A :class:`CaptureResult` with the stop reason and captured cycles.
@@ -477,7 +477,7 @@ class HardwareAPI:
         result = ReadResult(ok=False, reason="unknown")
 
         while True:
-            msg = self._recv_json_frame(timeout=frame_timeout)
+            msg = self._recv_json_frame(timeout=resolved_timeout)
             if msg.get("type") == "event" and msg.get("event") == "cycle":
                 cycles.append(parse_cycle_event(msg))
             elif msg.get("type") == "event" and msg.get("event") == "done":
