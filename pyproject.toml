@@ -12,6 +12,8 @@ license = "MIT"
 authors = [
     {name = "Douglas Luman", email = "dluman@allegheny.edu"},
     {name = "Abishek Dhakal", email = "dhakal01@allegheny.edu"},
+    {name = "Anupraj Guragain", email = "guragain01@allegheny.edu"},
+    {name = "Ritesh Ojha", email = "ojha01@allegheny.edu"},
     {name = "Molly Suppo", email = "suppo01@allegheny.edu"},
     {name = "Cullen Doyle", email = "doyle01@allegheny.edu"}
 ]
