@@ -451,8 +451,8 @@ class HardwareAPI:
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
                 firmware stops. Defaults to ``10000``.
-           frame_timeout: Per-frame read timeout in seconds while waiting for
-                cycle/done events. Defaults to :attr:`self.timeout`.
+            frame_timeout: Per-frame read timeout in seconds while waiting for
+                cycle/done events. Defaults to :attr:`timeout`.
 
         Returns:
             A :class:`CaptureResult` with the stop reason and captured cycles.
@@ -478,24 +478,33 @@ class HardwareAPI:
         if not ack.get("ok"):
             raise HardwareAPIError(f"read rejected: {ack}")
 
+        self._emit({"type": "waiting", "for": "cycle_or_done", "timeout_s": resolved_timeout})
+
         cycles: list[CycleEvent] = []
         result = ReadResult(ok=False, reason="unknown")
 
-        while True:
-            msg = self._recv_json_frame(timeout=resolved_timeout)
-            if msg.get("type") == "event" and msg.get("event") == "cycle":
-                cycles.append(parse_cycle_event(msg))
-            elif msg.get("type") == "event" and msg.get("event") == "done":
-                done = parse_done_event(msg)
-                result = ReadResult(
-                    ok=done.ok,
-                    reason=done.reason,
-                    cycles=cycles,
-                    stopped_addr=done.addr,
-                )
-                break
-            else:
-                raise HardwareAPIError(f"unexpected frame during read: {msg}")
+        try:
+            while True:
+                msg = self._recv_json_frame(timeout=resolved_timeout)
+                if msg.get("type") == "event" and msg.get("event") == "cycle":
+                    cycles.append(parse_cycle_event(msg))
+                elif msg.get("type") == "event" and msg.get("event") == "done":
+                    done = parse_done_event(msg)
+                    result = ReadResult(
+                        ok=done.ok,
+                        reason=done.reason,
+                        cycles=cycles,
+                        stopped_addr=done.addr,
+                    )
+                    break
+                else:
+                    raise HardwareAPIError(f"unexpected frame during read: {msg}")
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"{exc}; no bus-cycle frames after read ack "
+                f"(got {len(cycles)} cycles). Check PHI2 is running and "
+                f"firmware flushes ENQ/STX before ACK (reflash make-it-faster)."
+            ) from exc
 
         capture = CaptureResult.from_read_result(result)
         self._emit({"type": "ret", "method": "read_until_stp", "result": asdict(capture)})
