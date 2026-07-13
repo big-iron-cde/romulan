@@ -49,6 +49,8 @@ ACK = 0x06
 EOT = 0x04
 NACK = 0x15
 
+# PHI2 rate requested when arming bus capture (must match piclone default on make-it-faster).
+CAPTURE_PHI2_HZ = 100.0
 
 
 class HardwareAPIError(Exception):
@@ -451,8 +453,8 @@ class HardwareAPI:
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
                 firmware stops. Defaults to ``10000``.
-           frame_timeout: Per-frame read timeout in seconds while waiting for
-                cycle/done events. Defaults to :attr:`self.timeout`.
+            frame_timeout: Per-frame read timeout in seconds while waiting for
+                cycle/done events. Defaults to :attr:`timeout`.
 
         Returns:
             A :class:`CaptureResult` with the stop reason and captured cycles.
@@ -473,29 +475,49 @@ class HardwareAPI:
                 req_id=self._next_id(),
                 until="stp",
                 max_cycles=max_cycles,
+                phi2_hz=CAPTURE_PHI2_HZ,
             )
         )
         if not ack.get("ok"):
             raise HardwareAPIError(f"read rejected: {ack}")
 
+        self._emit({"type": "waiting", "for": "read_event", "timeout_s": resolved_timeout})
+
         cycles: list[CycleEvent] = []
         result = ReadResult(ok=False, reason="unknown")
+        deadline = time.time() + resolved_timeout
+        poll_idle_s = 0.02
 
-        while True:
-            msg = self._recv_json_frame(timeout=resolved_timeout)
-            if msg.get("type") == "event" and msg.get("event") == "cycle":
-                cycles.append(parse_cycle_event(msg))
-            elif msg.get("type") == "event" and msg.get("event") == "done":
-                done = parse_done_event(msg)
-                result = ReadResult(
-                    ok=done.ok,
-                    reason=done.reason,
-                    cycles=cycles,
-                    stopped_addr=done.addr,
+        try:
+            while time.time() < deadline:
+                msg = self._exchange_json(
+                    build_request("read_event", req_id=self._next_id())
                 )
-                break
+                event = msg.get("event")
+                if msg.get("type") == "event" and event == "cycle":
+                    cycles.append(parse_cycle_event(msg))
+                    # Got progress — extend the overall deadline.
+                    deadline = time.time() + resolved_timeout
+                elif msg.get("type") == "event" and event == "done":
+                    done = parse_done_event(msg)
+                    result = ReadResult(
+                        ok=done.ok,
+                        reason=done.reason,
+                        cycles=cycles,
+                        stopped_addr=done.addr,
+                    )
+                    break
+                elif event == "none":
+                    time.sleep(poll_idle_s)
+                else:
+                    raise HardwareAPIError(f"unexpected frame during read: {msg}")
             else:
-                raise HardwareAPIError(f"unexpected frame during read: {msg}")
+                raise TimeoutError(
+                    f"timed out after read ack (got {len(cycles)} cycles). "
+                    "No STP/done yet — is PHI2 running? Try --timeout 60."
+                )
+        except TimeoutError:
+            raise
 
         capture = CaptureResult.from_read_result(result)
         self._emit({"type": "ret", "method": "read_until_stp", "result": asdict(capture)})
