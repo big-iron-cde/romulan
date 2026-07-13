@@ -290,7 +290,7 @@ class HardwareAPI:
         self.ser.reset_input_buffer()
 
     def request_addr(self) -> int:
-         """Ask the firmware for the address currently on the CPU bus.
+        """Ask the firmware for the address currently on the CPU bus.
 
         Returns:
             The current CPU address as an integer.
@@ -310,7 +310,7 @@ class HardwareAPI:
         return addr_int
 
     def reset(self, assert_reset: bool) -> None:
-         """Assert or release the 65C02 RESET line.
+        """Assert or release the 65C02 RESET line.
 
         Side effects:
             Changes the CPU run state: asserting reset halts the CPU, while
@@ -438,8 +438,7 @@ class HardwareAPI:
         max_cycles: int = 10000,
         frame_timeout: float | None = None,
     ) -> CaptureResult:
-        resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
-         """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
+        """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
 
         Streams ``cycle`` events from the firmware and stops on the terminating
         ``done`` event (reached when the CPU halts via STP or ``max_cycles`` is
@@ -463,6 +462,7 @@ class HardwareAPI:
                 arrives.
             TimeoutError: If the Pico stops sending frames before ``done``.
         """
+        resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
         self._emit({"type": "call", "method": "read_until_stp", "max_cycles": max_cycles})
         self.monitor(enable=False)
         self._drain_input()
