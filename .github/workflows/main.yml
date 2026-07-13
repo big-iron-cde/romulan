@@ -15,8 +15,11 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Sync uv dependencies
-      run: uv sync
+    - name: Setup uv
+      run: |
+        echo "Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        uv sync
 
     - name: Build test ROM
       run: uv run romulan demo.txt --build
