@@ -12,8 +12,7 @@
 
 - **Parse annotated hex dumps** — address, byte, and optional comment per line
 - **Build 32 KB ROM images** — auto-fill with NOPs (`$EA`), validate reset/IRQ vectors
-- **Plain-text upload** — legacy `loadbin` protocol with safe reset/ROM sequencing
-- **Framed Hardware API (v1)** — JSON over ENQ/STX/ACK/EOT for scripted control
+- **Framed Hardware API (v1)** — JSON over ENQ/STX/ACK/EOT for scripted control and ROM upload
 - **Bus capture** — stream CPU cycles until `STP` or a cycle limit
 - **Cross-platform port detection** — auto-detect the Pico on Linux, macOS, and Windows
 - **65C02 opcode validation** — catch undefined opcodes before they reach hardware
@@ -36,7 +35,7 @@ Build a ROM from an annotated hex file:
 uv run romulan demo.txt --build
 ```
 
-Build and upload in one step (plain-text protocol):
+Build and upload in one step (framed Hardware API):
 
 ```bash
 uv run romulan demo.txt --build --upload
@@ -110,7 +109,7 @@ Each line is `address`, `byte`, and an optional `@ comment`:
 |------|-------------|---------|
 | `input` | Path to the annotated hex dump file (required with `--build`) | — |
 | `--build` | Build a `.bin` ROM image from the input file | — |
-| `--upload` | Upload the ROM image to the Pico | — |
+| `--upload` | Upload the ROM image to the Pico (framed Hardware API) | — |
 | `-o, --output` | Output ROM binary path | `bin/rom.bin` |
 | `--port` | Serial port for the Pico (auto-detected if omitted) | Auto-detect |
 
@@ -140,11 +139,13 @@ Full firmware-side protocol reference: [Piclone Hardware API docs](https://big-i
 
 ```bash
 $ uv run romulan hardware request-addr --verbose
-[HW] Opened /dev/ttyACM0 @ 115200
-[HW] CALL request_addr()
-[HW] SEND: {"cmd": "request_addr"}
-[HW] RECV: {"addr": 32768}
-[HW] RET request_addr -> 32768
+{"type":"port_detected","port":"/dev/ttyACM0","auto_detected":true}
+{"type":"call","method":"request_addr"}
+{"type":"send","payload":{"v":1,"cmd":"request_addr","id":"abc123"}}
+{"type":"ack"}
+{"type":"ack"}
+{"type":"recv","payload":{"v":1,"ok":true,"addr":"8000"}}
+{"type":"ret","method":"request_addr","result":32768}
 Current CPU address: 0x8000
 ```
 

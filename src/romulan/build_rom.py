@@ -128,56 +128,85 @@ def parse_hex_file(path: Path) -> dict[int, int]:
     return data
 
 
-def verify_instructions(data: List[int], error_list: List) -> None:
-    """Validate opcode bytes and append errors instead of raising immediately.
+# W65C02 instruction lengths (bytes) indexed by opcode.
+# Teaching "invalid" opcodes are still flagged even when they are 1-byte NOPs on 65C02.
+_OPCODE_LENGTH: list[int] = [
+    # 0x00-0x0F
+    2, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0x10-0x1F
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 3,
+    # 0x20-0x2F
+    3, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0x30-0x3F
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 3,
+    # 0x40-0x4F
+    1, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0x50-0x5F
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 1, 3, 3, 3,
+    # 0x60-0x6F
+    1, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0x70-0x7F
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 3,
+    # 0x80-0x8F
+    2, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0x90-0x9F
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 3,
+    # 0xA0-0xAF
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0xB0-0xBF
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 3,
+    # 0xC0-0xCF
+    2, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0xD0-0xDF
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 1, 3, 3, 3,
+    # 0xE0-0xEF
+    2, 2, 1, 1, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+    # 0xF0-0xFF
+    2, 2, 2, 1, 2, 2, 2, 2, 1, 3, 1, 1, 1, 3, 3, 3,
+]
 
-    Distinguishes undefined opcodes from immediate or address operands that
-    follow a valid instruction byte. Errors are appended to ``error_list`` and
-    :data:`ERROR_COUNTER` is incremented.
+# Opcodes treated as errors for this course (avoid NMOS-illegal / unused slots).
+_INVALID_OPCODES = frozenset({
+    0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
+    0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B, 0x5C,
+    0x62, 0x63, 0x6B, 0x73, 0x7B, 0x82, 0x83, 0x8B, 0x93,
+    0x9B, 0xA3, 0xAB, 0xB3, 0xBB, 0xC2, 0xC3, 0xD3, 0xD4,
+    0xDC, 0xE2, 0xE3, 0xEB, 0xF3, 0xF4, 0xFB, 0xFC,
+})
+
+
+def verify_instructions(data: List[int], error_list: List) -> None:
+    """Validate a contiguous instruction stream and append errors.
+
+    Walks opcode lengths so operand bytes are never treated as opcodes.
+    Errors are appended to ``error_list`` and :data:`ERROR_COUNTER` is incremented.
 
     Args:
-        data: Byte values parsed from the ROM image.
+        data: Contiguous program bytes (not including reset/IRQ vector slots).
         error_list: List that receives human-readable error messages.
     """
-    invalid_instructions = [0x02, 0x03, 0x0B, 0x13, 0x1B, 0x22, 0x23, 0x2B, 0x33,
-                            0x3B, 0x42, 0x43, 0x44, 0x4B, 0x53, 0x54, 0x5B,0x5C,
-                            0x62, 0x63, 0x6B, 0x73, 0x7B, 0x82, 0x83, 0x8B, 0x93,
-                            0x9B, 0xA3, 0xAB, 0xB3, 0xBB, 0xC2, 0xC3, 0xD3, 0xD4,
-                            0xDC, 0xE2, 0xE3, 0xEB, 0xF3, 0xF4, 0xFB, 0xFC]
-    instructions_with_immediate = [0x09, 0x29, 0x49, 0x69, 0x89, 0xA0, 0xA2, 0xA9, 0xC0,
-                                   0xC9, 0xE0, 0xE9]
-    instructions_with_address = [0x00, 0x0C, 0x0D, 0x0E, 0x19, 0x1C, 0x1D, 0x1E, 0x20,
-                                 0x2A, 0x2C, 0x2D, 0x2E, 0x39, 0x3C, 0x3D, 0x3E, 0x4C,
-                                 0x4D, 0x4E, 0x59, 0x5D, 0x5E, 0x6C, 0x6D, 0x6E, 0x79,
-                                 0x7C, 0x7D, 0x7E, 0x8C, 0x8D, 0x8E, 0x99, 0x9C, 0x9D,
-                                 0x9E, 0xAC, 0xAD, 0xAE, 0xBC, 0xBD, 0xBE, 0xCC, 0xCD,
-                                 0xCE, 0xD9, 0xDD, 0xDE, 0xEC, 0xED, 0xEE, 0xF9, 0xFD,
-                                 0xFE]
-
     global ERROR_COUNTER
 
-    for d in data:
-        if 0x00 <= d <= 0xFF:
-            if d in invalid_instructions:
-                position = data.index(d)
-                if (
-                    data[position - 1] in instructions_with_immediate
-                    or data[position - 1] in instructions_with_address
-                ):
-                    continue
-                elif (
-                    position - 2 >= 0
-                    and data[position - 2] in instructions_with_address
-                ):
-                    continue
-                else:
-                    error_list.append(f"Invalid instruction: ${d} is undefined")
-                    ERROR_COUNTER += 1
-        else:
+    i = 0
+    while i < len(data):
+        op = data[i]
+        if not (0x00 <= op <= 0xFF):
             error_list.append(
-                f"Invalid instruction: ${d} is out of range (0x00 - 0xFF)"
+                f"Invalid instruction: ${op} is out of range (0x00 - 0xFF)"
             )
             ERROR_COUNTER += 1
+            i += 1
+            continue
+
+        if op in _INVALID_OPCODES:
+            error_list.append(f"Invalid instruction: ${op:02X} is undefined")
+            ERROR_COUNTER += 1
+
+        length = _OPCODE_LENGTH[op]
+        if i + length > len(data):
+            # Truncated final instruction at the end of the supplied region.
+            break
+        i += length
 
 
 def verify_instruction_order(data: List[int], error_list: List) -> None:
@@ -208,14 +237,17 @@ def error_processing(data_dict: Dict[int, int]) -> List:
     Returns:
         A list of human-readable error messages (empty when validation passes).
     """
-    byte_list = list(data_dict.values())
-    instruction_list = []
-    for instruction in data_dict.keys():
-        new_instruction = instruction - ROM_BASE_ADDR
-        instruction_list.append(new_instruction)
-    error_list_final = []
-    verify_instructions(data=byte_list, error_list=error_list_final)
-    verify_instruction_order(data=instruction_list, error_list=error_list_final)
+    VECTOR_FILE_BASE = 0x7FFC
+    ordered = sorted(data_dict.items())
+    file_addrs = [cpu - ROM_BASE_ADDR for cpu, _ in ordered]
+    program_bytes = [
+        value
+        for cpu, value in ordered
+        if (cpu - ROM_BASE_ADDR) < VECTOR_FILE_BASE
+    ]
+    error_list_final: List = []
+    verify_instructions(data=program_bytes, error_list=error_list_final)
+    verify_instruction_order(data=file_addrs, error_list=error_list_final)
     return error_list_final
 
 
