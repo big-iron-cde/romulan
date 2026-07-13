@@ -25,7 +25,7 @@ Romulan ships with `demo.txt`, a sample annotated hex dump. Build and upload it:
 uv run romulan demo.txt --build --upload
 ```
 
-This produces `bin/rom.bin` (32 KB) and uploads it to the Pico via the plain-text `loadbin` protocol.
+This produces `bin/rom.bin` (32 KB) and uploads it to the Pico via the framed Hardware API.
 
 ## Serial port
 

@@ -14,21 +14,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install Dependencies
         run: |
-          echo "Installing necessary dependencies..."
           curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           uv sync
 
-      - name: Run Error Handling Test Suite
-        run: |
-          echo "Running test files..."
-          uv run pytest tests/test_main.py
-          uv run pytest tests/test_error_processing.py
+      - name: Run full test suite
+        run: uv run pytest

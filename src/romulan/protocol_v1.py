@@ -51,7 +51,7 @@ class CycleEvent:
         seq: Monotonic sequence number assigned by the firmware.
         addr: Address on the bus, as a hex string.
         data: Data byte on the bus, as a hex string.
-        rw: Read/write flag (1 = read, 0 = write).
+        rw: Read/write flag (0 = read, 1 = write).
     """
 
     seq: int
