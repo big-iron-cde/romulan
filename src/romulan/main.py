@@ -231,13 +231,26 @@ def _handle_hardware(args: argparse.Namespace) -> None:
                 data = args.bin_path.read_bytes()
                 result = api.upload_rom(data)
                 print(f"Upload result: {result}")
+                print(
+                    "CPU held in reset — run `hardware capture` "
+                    "or `hardware reset --release` to run."
+                )
 
             elif cmd == "capture":
-                result = api.read_until_stp(max_cycles=args.max_cycles)
+                print("Capturing…", flush=True)
+
+                def _print_cycle(cycle) -> None:
+                    print(
+                        f"  #{cycle.seq}  addr={cycle.addr} data={cycle.data} rw={cycle.rw}",
+                        flush=True,
+                    )
+
+                result = api.read_until_stp(
+                    max_cycles=args.max_cycles,
+                    on_cycle=_print_cycle,
+                )
                 print(f"Capture finished: {result.reason}")
                 print(f"Cycles captured: {len(result.cycles)}")
-                for cycle in result.cycles:
-                    print(f"  {cycle}")
 
             elif cmd == "monitor":
                 if args.enable and args.disable:
