@@ -28,6 +28,13 @@ from .upload_rom import find_pico_port, upload
 
 
 def create_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the default build/upload workflow.
+
+    Returns:
+        A configured :class:`argparse.ArgumentParser` accepting the input
+        file plus the ``--build``, ``--upload``, ``--output``, and ``--port``
+        options.
+    """
     parser = argparse.ArgumentParser(
         prog="romulan",
         description="Build and upload ROM images for the Pico-as-ROM 65C02 system.",
@@ -63,7 +70,15 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
-    """Create a dedicated parser for the ``hardware`` sub-command."""
+    """Create a dedicated parser for the ``hardware`` sub-command.
+
+    The ``hardware`` command has its own subcommands (``upload``, ``capture``,
+    ``monitor``, ``reset``, ``request-addr``), each sharing the common
+    ``--port`` and ``--verbose`` options.
+
+    Returns:
+        A configured :class:`argparse.ArgumentParser` for ``romulan hardware``.
+    """
     parser = argparse.ArgumentParser(
         prog="romulan hardware",
         description="Hardware API commands (framed serial protocol)",
@@ -163,6 +178,17 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
 
 
 def _resolve_port(port: str | None) -> str:
+    """Return a usable serial port, auto-detecting one if not given.
+
+    Args:
+        port: An explicit serial device path, or ``None`` to auto-detect.
+
+    Returns:
+        The resolved serial device path.
+
+    Raises:
+        RuntimeError: If no port is given and none can be auto-detected.
+    """
     if port is None:
         port = find_pico_port()
         print(
@@ -180,7 +206,20 @@ def _resolve_port(port: str | None) -> str:
 
 
 def _handle_hardware(args: argparse.Namespace) -> None:
-    """Dispatch the 'hardware' sub-command."""
+    """Dispatch a parsed ``hardware`` sub-command against the hardware API.
+
+    Opens a :class:`~romulan.hardware_api.HardwareAPI` on the resolved port and
+    runs the requested operation (upload, capture, monitor, reset, or
+    request-addr), printing results to stdout.
+
+    Side effects:
+        Opens the serial port and drives the hardware. May call
+        :func:`sys.exit` with status 1 on conflicting flags or API errors.
+
+    Args:
+        args: Parsed arguments from the ``hardware`` sub-parser; must include
+            ``hw_cmd``, ``port``, and ``verbose``.
+    """
     from .hardware_api import HardwareAPI, HardwareAPIError
 
     cmd = args.hw_cmd
@@ -233,6 +272,17 @@ def _handle_hardware(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Entry point for the ``romulan`` command-line tool.
+
+    Routes to the ``hardware`` sub-command when it is the first argument;
+    otherwise runs the default workflow, which builds a ROM image from an
+    input file (``--build``) and/or uploads it to the Pico (``--upload``).
+
+    Side effects:
+        Parses ``sys.argv``, may read/write files, and may open the serial
+        port to talk to the Pico. Exits via :func:`sys.exit` (or
+        ``parser.error``) on invalid arguments or failures.
+    """
     # When the first argument is "hardware" we dispatch to a dedicated
     # sub-parser so that the positional ``input`` argument does not
     # conflict with the sub-command name.
