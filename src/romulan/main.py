@@ -17,6 +17,7 @@ Examples:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -164,7 +165,17 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
 def _resolve_port(port: str | None) -> str:
     if port is None:
         port = find_pico_port()
-        print(f"Auto-detected Pico on {port}")
+        print(
+            json.dumps({"type": "port_detected", "port": port, "auto_detected": True}),
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print(
+            json.dumps({"type": "port_detected", "port": port, "auto_detected": False}),
+            file=sys.stderr,
+            flush=True,
+        )
     return port
 
 
@@ -264,10 +275,20 @@ def main() -> None:
         if port is None:
             try:
                 port = find_pico_port()
-                print(f"Auto-detected Pico on {port}")
+                print(
+                    json.dumps({"type": "port_detected", "port": port, "auto_detected": True}),
+                    file=sys.stderr,
+                    flush=True,
+                )
             except RuntimeError as exc:
                 print(f"ERROR: {exc}", file=sys.stderr)
                 sys.exit(1)
+        else:
+            print(
+                json.dumps({"type": "port_detected", "port": port, "auto_detected": False}),
+                file=sys.stderr,
+                flush=True,
+            )
 
         try:
             upload(port, args.output)

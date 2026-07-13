@@ -7,7 +7,7 @@ import json
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import serial
@@ -78,7 +78,7 @@ class HardwareAPI:
         self._open()
 
     def _open(self) -> None:
-        self._log(f"Opened {self.port} @ {self.baudrate}")
+        self._emit({"type": "open", "port": self.port, "baudrate": self.baudrate})
         self._ser = serial.Serial(
             self.port,
             self.baudrate,
@@ -90,7 +90,7 @@ class HardwareAPI:
 
     def close(self) -> None:
         if self._ser is not None:
-            self._log("Closed")
+            self._emit({"type": "close"})
             self._ser.close()
             self._ser = None
 
@@ -106,16 +106,18 @@ class HardwareAPI:
             raise HardwareAPIError("Serial port is closed")
         return self._ser
 
-    def _log(self, msg: str) -> None:
+    def _emit(self, event: dict[str, Any]) -> None:
         if self.verbose:
-            print(f"[HW] {msg}", file=sys.stderr, flush=True)
+            print(json.dumps(event, separators=(",", ":"), ensure_ascii=False), file=sys.stderr, flush=True)
 
-    @staticmethod
-    def _payload_preview(payload: bytes) -> str:
+    def _payload_event(self, direction: str, payload: bytes) -> dict[str, Any]:
+        event: dict[str, Any] = {"type": direction}
         try:
-            return payload.decode("utf-8")
-        except UnicodeDecodeError:
-            return f"<binary, {len(payload)} bytes>"
+            text = payload.decode("utf-8")
+            event["payload"] = json.loads(text)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            event["payload"] = {"binary": True, "bytes": len(payload)}
+        return event
 
     def _sync_to_byte(self, acceptable: set[int], timeout: float | None = None) -> int:
         wait = self.timeout if timeout is None else timeout
@@ -123,9 +125,13 @@ class HardwareAPI:
         while time.time() < deadline:
             b = self.ser.read(1)
             if b and b[0] in acceptable:
+                if b[0] == ACK:
+                    self._emit({"type": "ack"})
+                elif b[0] == NACK:
+                    self._emit({"type": "nack"})
                 return b[0]
         labels = ", ".join(f"0x{v:02X}" for v in sorted(acceptable))
-        self._log(f"ERROR: timed out waiting for {labels}")
+        self._emit({"type": "error", "error": "timeout", "detail": f"timed out waiting for {labels}"})
         raise TimeoutError(f"timed out waiting for {labels}")
 
     def _write_byte(self, value: int) -> None:
@@ -149,34 +155,34 @@ class HardwareAPI:
                     self._write_byte(ACK)
                     return bytes(buf)
                 buf.append(byte)
-        self._log("ERROR: timed out waiting for EOT in response payload")
+        self._emit({"type": "error", "error": "timeout", "detail": "timed out waiting for EOT in response payload"})
         raise TimeoutError("timed out waiting for EOT in response payload")
 
     def _send_frame_host(self, payload: bytes) -> None:
-        self._log(f"SEND: {self._payload_preview(payload)}")
+        self._emit(self._payload_event("send", payload))
         self._write_byte(ENQ)
         self._write_byte(STX)
         if self._sync_to_byte({ACK, NACK}) != ACK:
-            self._log("ERROR: Pico responded with NACK")
+            self._emit({"type": "error", "error": "nack", "detail": "Pico responded with NACK"})
             raise HardwareAPIError("Pico responded with NACK")
         self.ser.write(payload)
         self._write_byte(EOT)
         if self._sync_to_byte({ACK, NACK}) != ACK:
-            self._log("ERROR: Pico responded with NACK")
+            self._emit({"type": "error", "error": "nack", "detail": "Pico responded with NACK"})
             raise HardwareAPIError("Pico responded with NACK")
 
     def _send_frame(self, payload: bytes) -> bytes:
         self._send_frame_host(payload)
         self._sync_to_byte({ENQ})
         raw = self._read_frame_payload()
-        self._log(f"RECV: {self._payload_preview(raw)}")
+        self._emit(self._payload_event("recv", raw))
         return raw
 
     def _recv_json_frame(self, timeout: float | None = None) -> dict[str, Any]:
         wait = self.timeout if timeout is None else timeout
         self._sync_to_byte({ENQ}, timeout=wait)
         raw = self._read_frame_payload(timeout=wait)
-        self._log(f"RECV: {self._payload_preview(raw)}")
+        self._emit(self._payload_event("recv", raw))
         return parse_frame(raw)
 
     def _parse_response(self, raw: bytes) -> dict[str, Any]:
@@ -213,35 +219,35 @@ class HardwareAPI:
         self.ser.reset_input_buffer()
 
     def request_addr(self) -> int:
-        self._log("CALL request_addr()")
+        self._emit({"type": "call", "method": "request_addr"})
         resp = self._exchange_json(build_request("request_addr", req_id=self._next_id()))
         addr = resp.get("addr")
         if addr is None:
             raise HardwareAPIError(f"Missing 'addr' in response: {resp!r}")
         addr_int = self._parse_addr(addr)
-        self._log(f"RET request_addr -> {addr_int}")
+        self._emit({"type": "ret", "method": "request_addr", "result": addr_int})
         return addr_int
 
     def reset(self, assert_reset: bool) -> None:
-        self._log(f"CALL reset(assert_reset={assert_reset})")
+        self._emit({"type": "call", "method": "reset", "assert_reset": assert_reset})
         self._exchange_json(
             build_request("reset", req_id=self._next_id(), assert_reset=assert_reset)
         )
-        self._log("RET reset")
+        self._emit({"type": "ret", "method": "reset"})
 
     def monitor(self, enable: bool) -> None:
-        self._log(f"CALL monitor(enable={enable})")
+        self._emit({"type": "call", "method": "monitor", "enable": enable})
         self._exchange_json(
             build_request("monitor", req_id=self._next_id(), enable=enable)
         )
-        self._log("RET monitor")
+        self._emit({"type": "ret", "method": "monitor"})
 
     def status(self) -> StatusResponse:
         resp = self._exchange_json(build_request("status", req_id=self._next_id()))
         return parse_status(resp)
 
     def upload_rom(self, data: bytes) -> dict[str, Any]:
-        self._log(f"CALL upload_rom(size={len(data)})")
+        self._emit({"type": "call", "method": "upload_rom", "size": len(data)})
         if len(data) != ROM_SIZE:
             raise ValueError(f"ROM must be exactly {ROM_SIZE} bytes, got {len(data)}")
 
@@ -285,7 +291,7 @@ class HardwareAPI:
             "reset_vector": final.reset_vector,
             "expected": progress.expected,
         }
-        self._log(f"RET upload_rom -> {result}")
+        self._emit({"type": "ret", "method": "upload_rom", "result": result})
         return result
 
     def read_until_stp(
@@ -294,7 +300,7 @@ class HardwareAPI:
         frame_timeout: float | None = None,
     ) -> CaptureResult:
         resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
-        self._log(f"CALL read_until_stp(max_cycles={max_cycles})")
+        self._emit({"type": "call", "method": "read_until_stp", "max_cycles": max_cycles})
         self.monitor(enable=False)
         self._drain_input()
 
@@ -329,7 +335,7 @@ class HardwareAPI:
                 raise HardwareAPIError(f"unexpected frame during read: {msg}")
 
         capture = CaptureResult.from_read_result(result)
-        self._log(f"RET read_until_stp -> {capture}")
+        self._emit({"type": "ret", "method": "read_until_stp", "result": asdict(capture)})
         return capture
 
 
