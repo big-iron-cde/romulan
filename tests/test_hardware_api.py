@@ -64,6 +64,10 @@ def _enqueue_nack(mock_serial):
     mock_serial._read_buffer.append(NACK)
 
 
+def _parse_ndjson(stderr: str) -> list[dict]:
+    return [json.loads(line) for line in stderr.strip().splitlines() if line.strip()]
+
+
 class TestSendFrame:
     def test_basic_json_roundtrip(self, mock_serial):
         request = json.dumps(build_request("request_addr", req_id="t1")).encode()
@@ -214,7 +218,7 @@ class TestCaptureResult:
 
 class TestVerboseLogging:
     def test_request_addr_verbose(self, mock_serial, capsys):
-        """verbose=True prints CALL, SEND, RECV, RET for request_addr."""
+        """verbose=True emits JSON events for request_addr."""
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(
             mock_serial,
@@ -226,13 +230,18 @@ class TestVerboseLogging:
         assert addr == 0x8000
 
         captured = capsys.readouterr()
-        assert "[HW] CALL request_addr()" in captured.err
-        assert "[HW] SEND: " in captured.err
-        assert "[HW] RECV: " in captured.err
-        assert "[HW] RET request_addr -> 32768" in captured.err
+        events = _parse_ndjson(captured.err)
+        assert events[0] == {"type": "call", "method": "request_addr"}
+        assert events[1]["type"] == "send"
+        assert events[1]["payload"]["cmd"] == "request_addr"
+        assert events[2] == {"type": "ack"}
+        assert events[3] == {"type": "ack"}
+        assert events[4]["type"] == "recv"
+        assert events[4]["payload"]["addr"] == "8000"
+        assert events[5] == {"type": "ret", "method": "request_addr", "result": 0x8000}
 
     def test_reset_verbose(self, mock_serial, capsys):
-        """verbose=True prints CALL and RET for reset."""
+        """verbose=True emits JSON events for reset."""
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"reset"}')
 
@@ -240,11 +249,16 @@ class TestVerboseLogging:
         api.reset(assert_reset=True)
 
         captured = capsys.readouterr()
-        assert "[HW] CALL reset(assert_reset=True)" in captured.err
-        assert "[HW] RET reset" in captured.err
+        events = _parse_ndjson(captured.err)
+        assert events[0] == {"type": "call", "method": "reset", "assert_reset": True}
+        assert events[1]["type"] == "send"
+        assert events[2] == {"type": "ack"}
+        assert events[3] == {"type": "ack"}
+        assert events[4]["type"] == "recv"
+        assert events[5] == {"type": "ret", "method": "reset"}
 
     def test_monitor_verbose(self, mock_serial, capsys):
-        """verbose=True prints CALL and RET for monitor."""
+        """verbose=True emits JSON events for monitor."""
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
 
@@ -252,11 +266,16 @@ class TestVerboseLogging:
         api.monitor(enable=False)
 
         captured = capsys.readouterr()
-        assert "[HW] CALL monitor(enable=False)" in captured.err
-        assert "[HW] RET monitor" in captured.err
+        events = _parse_ndjson(captured.err)
+        assert events[0] == {"type": "call", "method": "monitor", "enable": False}
+        assert events[1]["type"] == "send"
+        assert events[2] == {"type": "ack"}
+        assert events[3] == {"type": "ack"}
+        assert events[4]["type"] == "recv"
+        assert events[5] == {"type": "ret", "method": "monitor"}
 
     def test_upload_rom_verbose(self, mock_serial, capsys):
-        """verbose=True prints CALL, nested monitor, chunk SEND/RECV, RET."""
+        """verbose=True emits JSON events for upload_rom."""
         rom = b"\xEA" * ROM_SIZE
 
         _enqueue_transaction_acks(mock_serial)
@@ -296,12 +315,16 @@ class TestVerboseLogging:
         assert result["bytes"] == ROM_SIZE
 
         captured = capsys.readouterr()
-        assert "[HW] CALL upload_rom(size=32768)" in captured.err
-        assert "[HW] CALL monitor(enable=False)" in captured.err
-        assert "[HW] RET upload_rom ->" in captured.err
+        events = _parse_ndjson(captured.err)
+        assert events[0] == {"type": "call", "method": "upload_rom", "size": ROM_SIZE}
+        assert any(e == {"type": "call", "method": "monitor", "enable": False} for e in events)
+        assert any(
+            e["type"] == "ret" and e["method"] == "upload_rom" and e["result"]["bytes"] == ROM_SIZE
+            for e in events
+        )
 
     def test_read_until_stp_verbose(self, mock_serial, capsys):
-        """verbose=True prints CALL and RET for read_until_stp."""
+        """verbose=True emits JSON events for read_until_stp."""
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
 
@@ -319,11 +342,12 @@ class TestVerboseLogging:
         api.read_until_stp(max_cycles=500)
 
         captured = capsys.readouterr()
-        assert "[HW] CALL read_until_stp(max_cycles=500)" in captured.err
-        assert "[HW] RET read_until_stp ->" in captured.err
+        events = _parse_ndjson(captured.err)
+        assert events[0] == {"type": "call", "method": "read_until_stp", "max_cycles": 500}
+        assert any(e["type"] == "ret" and e["method"] == "read_until_stp" for e in events)
 
     def test_verbose_false_silent(self, mock_serial, capsys):
-        """verbose=False produces no [HW] output."""
+        """verbose=False produces no stderr output."""
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(
             mock_serial,
@@ -334,10 +358,10 @@ class TestVerboseLogging:
         api.request_addr()
 
         captured = capsys.readouterr()
-        assert "[HW]" not in captured.err
+        assert captured.err == ""
 
     def test_binary_payload_preview(self, mock_serial, capsys):
-        """Binary payloads are previewed as <binary, N bytes>."""
+        """Binary payloads are emitted as binary metadata in JSON."""
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(mock_serial, b'{"v":1,"ok":true}')
 
@@ -345,10 +369,14 @@ class TestVerboseLogging:
         api._send_frame(b"\x80\x81\x82\x83")
 
         captured = capsys.readouterr()
-        assert "[HW] SEND: <binary, 4 bytes>" in captured.err
+        events = _parse_ndjson(captured.err)
+        assert events[0] == {"type": "send", "payload": {"binary": True, "bytes": 4}}
+        assert events[1] == {"type": "ack"}
+        assert events[2] == {"type": "ack"}
+        assert events[3] == {"type": "recv", "payload": {"ok": True, "v": 1}}
 
     def test_error_logs_verbose(self, mock_serial, capsys):
-        """Timeouts and NACK are logged in verbose mode."""
+        """NACK is emitted as a JSON error event in verbose mode."""
         _enqueue_ack(mock_serial)
         _enqueue_nack(mock_serial)
 
@@ -357,7 +385,11 @@ class TestVerboseLogging:
             api._send_frame(b"x")
 
         captured = capsys.readouterr()
-        assert "[HW] ERROR: Pico responded with NACK" in captured.err
+        events = _parse_ndjson(captured.err)
+        assert events[0] == {"type": "send", "payload": {"binary": True, "bytes": 1}}
+        assert events[1] == {"type": "ack"}
+        assert events[2] == {"type": "nack"}
+        assert events[3] == {"type": "error", "error": "nack", "detail": "Pico responded with NACK"}
 
 
 # ---------------------------------------------------------------------------
