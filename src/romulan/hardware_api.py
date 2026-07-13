@@ -49,6 +49,8 @@ ACK = 0x06
 EOT = 0x04
 NACK = 0x15
 
+# PHI2 rate requested when arming bus capture (must match piclone default on make-it-faster).
+CAPTURE_PHI2_HZ = 100.0
 
 
 class HardwareAPIError(Exception):
@@ -473,22 +475,30 @@ class HardwareAPI:
                 req_id=self._next_id(),
                 until="stp",
                 max_cycles=max_cycles,
+                phi2_hz=CAPTURE_PHI2_HZ,
             )
         )
         if not ack.get("ok"):
             raise HardwareAPIError(f"read rejected: {ack}")
 
-        self._emit({"type": "waiting", "for": "cycle_or_done", "timeout_s": resolved_timeout})
+        self._emit({"type": "waiting", "for": "read_event", "timeout_s": resolved_timeout})
 
         cycles: list[CycleEvent] = []
         result = ReadResult(ok=False, reason="unknown")
+        deadline = time.time() + resolved_timeout
+        poll_idle_s = 0.02
 
         try:
-            while True:
-                msg = self._recv_json_frame(timeout=resolved_timeout)
-                if msg.get("type") == "event" and msg.get("event") == "cycle":
+            while time.time() < deadline:
+                msg = self._exchange_json(
+                    build_request("read_event", req_id=self._next_id())
+                )
+                event = msg.get("event")
+                if msg.get("type") == "event" and event == "cycle":
                     cycles.append(parse_cycle_event(msg))
-                elif msg.get("type") == "event" and msg.get("event") == "done":
+                    # Got progress — extend the overall deadline.
+                    deadline = time.time() + resolved_timeout
+                elif msg.get("type") == "event" and event == "done":
                     done = parse_done_event(msg)
                     result = ReadResult(
                         ok=done.ok,
@@ -497,14 +507,17 @@ class HardwareAPI:
                         stopped_addr=done.addr,
                     )
                     break
+                elif event == "none":
+                    time.sleep(poll_idle_s)
                 else:
                     raise HardwareAPIError(f"unexpected frame during read: {msg}")
-        except TimeoutError as exc:
-            raise TimeoutError(
-                f"{exc}; no bus-cycle frames after read ack "
-                f"(got {len(cycles)} cycles). Check PHI2 is running and "
-                f"firmware flushes ENQ/STX before ACK (reflash make-it-faster)."
-            ) from exc
+            else:
+                raise TimeoutError(
+                    f"timed out after read ack (got {len(cycles)} cycles). "
+                    "No STP/done yet — is PHI2 running? Try --timeout 60."
+                )
+        except TimeoutError:
+            raise
 
         capture = CaptureResult.from_read_result(result)
         self._emit({"type": "ret", "method": "read_until_stp", "result": asdict(capture)})
