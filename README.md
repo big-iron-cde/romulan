@@ -13,6 +13,7 @@
 - **Parse annotated hex dumps** — address, byte, and optional comment per line
 - **Build 32 KB ROM images** — auto-fill with NOPs (`$EA`), validate reset/IRQ vectors
 - **Framed Hardware API (v1)** — JSON over ENQ/STX/ACK/EOT for scripted control and ROM upload
+- **Verbose protocol traces** — `-v` / `--verbose` on `--upload` and on `hardware` subcommands (NDJSON SEND/RECV)
 - **Bus capture** — stream CPU cycles until `STP` or a cycle limit
 - **Cross-platform port detection** — auto-detect the Pico on Linux, macOS, and Windows
 - **65C02 opcode validation** — catch undefined opcodes before they reach hardware
@@ -39,18 +40,21 @@ Build and upload in one step (framed Hardware API):
 
 ```bash
 uv run romulan demo.txt --build --upload
-uv run romulan demo.txt --build --upload -v          # NDJSON protocol trace
+uv run romulan demo.txt --build --upload -v   # NDJSON protocol trace during upload
 ```
 
-Upload an existing binary:
+Upload an existing binary (optional `-v` / `--timeout`):
 
 ```bash
 uv run romulan --upload
+uv run romulan --upload -v --timeout 45
 ```
+
+`-v` / `--verbose` works on the standard `--upload` path as well as on `romulan hardware …` commands.
 
 ### Hardware API commands
 
-The `--port` flag is optional when exactly one Pico is connected. Add `--verbose` (`-v`) to see protocol traffic.
+The `--port` flag is optional when exactly one Pico is connected. Add `--verbose` (`-v`) for NDJSON protocol traffic on any hardware command (and on `--upload` above).
 
 ```bash
 uv run romulan hardware upload bin/rom.bin
@@ -137,6 +141,8 @@ Romulan speaks the Piclone firmware's **v1 JSON protocol** over USB-CDC at 11520
 | `--timeout` | Idle timeout in seconds with no framing/capture progress | `30.0` |
 
 Full firmware-side protocol reference: [Piclone Hardware API docs](https://big-iron-cde.github.io/piclone/hardware-api.html).
+
+Captured cycles include `rw`: **0 = read**, **1 = write**. Piclone firmware on Pico 2 **infers** this from **A15** (ROM region = read, RAM region = write), not from a wired RWB sense pin—so STA/store cycles report `rw=1` and opcode fetches report `rw=0`.
 
 #### Verbose example
 
