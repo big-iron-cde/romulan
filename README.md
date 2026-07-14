@@ -39,6 +39,7 @@ Build and upload in one step (framed Hardware API):
 
 ```bash
 uv run romulan demo.txt --build --upload
+uv run romulan demo.txt --build --upload -v          # NDJSON protocol trace
 ```
 
 Upload an existing binary:
@@ -112,6 +113,8 @@ Each line is `address`, `byte`, and an optional `@ comment`:
 | `--upload` | Upload the ROM image to the Pico (framed Hardware API) | — |
 | `-o, --output` | Output ROM binary path | `bin/rom.bin` |
 | `--port` | Serial port for the Pico (auto-detected if omitted) | Auto-detect |
+| `--timeout` | Idle timeout (seconds) with no framing progress on upload | `30.0` |
+| `--verbose`, `-v` | Hardware API NDJSON traces during `--upload` | — |
 
 At least one of `--build` or `--upload` is required, but `--upload` can only be used after a successful `--build` or if a valid ROM binary already exists at the output path.
 
@@ -131,7 +134,7 @@ Romulan speaks the Piclone firmware's **v1 JSON protocol** over USB-CDC at 11520
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--verbose`, `-v` | Print every JSON message sent and received over the serial protocol | — |
-| `--timeout` | Serial/frame timeout in seconds (applies to all hardware commands) | `30.0` |
+| `--timeout` | Idle timeout in seconds with no framing/capture progress | `30.0` |
 
 Full firmware-side protocol reference: [Piclone Hardware API docs](https://big-iron-cde.github.io/piclone/hardware-api.html).
 

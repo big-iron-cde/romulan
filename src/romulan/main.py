@@ -67,6 +67,18 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Serial port for the Pico (auto-detected if omitted)",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Idle timeout in seconds with no framing progress (default: 30.0)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print hardware protocol messages (SEND/RECV trace) during --upload",
+    )
     return parser
 
 
@@ -96,7 +108,7 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
             "--timeout",
             type=float,
             default=30.0,
-            help="Serial/frame timeout in seconds (default: 30.0)",
+            help="Idle timeout in seconds with no framing/capture progress (default: 30.0)",
         )
         p.add_argument(
             "--verbose",
@@ -357,7 +369,9 @@ def main() -> None:
             )
 
         try:
-            with HardwareAPI(port) as api:
+            with HardwareAPI(
+                port, timeout=args.timeout, verbose=args.verbose
+            ) as api:
                 result = api.upload_rom(args.output.read_bytes())
             print(f"Upload result: {result}")
             print(
