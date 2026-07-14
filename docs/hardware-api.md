@@ -46,6 +46,7 @@ All JSON payloads include `"v": 1`. An optional `"id"` field is echoed in respon
 | `monitor` | Enable or disable ASCII bus monitor |
 | `request_addr` | Read current CPU address |
 | `read` | Capture bus cycles until STP or max cycles |
+| `clock` | Set PHI2 clock frequency (0.1–1000 Hz) |
 | `status` | Query firmware state (clock, reset, ROM, monitor) |
 
 ### ROM upload
@@ -66,6 +67,24 @@ Send `{"v":1,"cmd":"read","until":"stp","max_cycles":N}` and receive streaming e
 - `{"type":"event","event":"done",...}` — capture finished
 
 `read_until_stp()` disables the monitor before starting capture.
+
+### Clock
+
+Set the 65C02 PHI2 frequency without starting a capture:
+
+```python
+api.set_clock(hz=100.0)
+```
+
+Or from the CLI:
+
+```bash
+uv run romulan hardware clock --hz 100
+```
+
+The supported range is **0.1–1000 Hz**. The `read` command also accepts an
+optional `phi2_hz` argument if you want to change the clock and capture in
+one step.
 
 ## Important notes
 

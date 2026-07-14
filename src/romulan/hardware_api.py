@@ -388,7 +388,7 @@ class HardwareAPI:
                 malformed data.
             TimeoutError: If the Pico does not respond in time.
         """
-        self._log(f"CALL peek(offset={offset}, count={count})")
+        self._emit({"type": "call", "method": "peek", "offset": offset, "count": count})
         if not 0 <= offset < ROM_SIZE:
             raise ValueError(f"offset must be within [0, {ROM_SIZE})")
         if count <= 0 or count > 64:
@@ -403,8 +403,32 @@ class HardwareAPI:
             )
         )
         result = parse_peek_response(resp)
-        self._log(f"RET peek -> {result.data.hex()}")
+        self._emit({"type": "return", "method": "peek", "data": result.data.hex()})
         return result
+
+    def set_clock(self, hz: float) -> None:
+        """Set the 65C02 PHI2 clock frequency.
+
+        Args:
+            hz: Target frequency in hertz. The firmware accepts 0.1..1000 Hz.
+
+        Raises:
+            ValueError: If ``hz`` is outside the supported range.
+            HardwareAPIError: If the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
+        self._emit({"type": "call", "method": "set_clock", "hz": hz})
+        if not 0.1 <= hz <= 1000.0:
+            raise ValueError("hz must be between 0.1 and 1000.0")
+
+        self._exchange_json(
+            build_request(
+                "clock",
+                req_id=self._next_id(),
+                phi2_hz=hz,
+            )
+        )
+        self._emit({"type": "return", "method": "set_clock"})
 
     def upload_rom(self, data: bytes) -> dict[str, Any]:
         """Upload a full 32 KB ROM image to the Pico in a begin/chunk/commit sequence.

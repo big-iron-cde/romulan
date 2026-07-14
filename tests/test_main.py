@@ -252,7 +252,7 @@ class TestHardwareVerbose:
 
         mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=False)
 
-    @patch("romulan.hardware_api.HardwareAPI")
+    @patch("romulan.main.HardwareAPI")
     def test_peek_hex_offset(self, mock_hw_cls: MagicMock) -> None:
         """hardware peek parses a hex offset and prints the returned bytes."""
         mock_api = MagicMock()
@@ -270,7 +270,7 @@ class TestHardwareVerbose:
 
         mock_api.peek.assert_called_once_with(offset=0x7000, count=3)
 
-    @patch("romulan.hardware_api.HardwareAPI")
+    @patch("romulan.main.HardwareAPI")
     def test_peek_decimal_offset(self, mock_hw_cls: MagicMock) -> None:
         """hardware peek parses a decimal offset."""
         mock_api = MagicMock()
@@ -287,3 +287,20 @@ class TestHardwareVerbose:
             main()
 
         mock_api.peek.assert_called_once_with(offset=28672, count=16)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_clock(self, mock_hw_cls: MagicMock) -> None:
+        """hardware clock calls set_clock with the requested Hz."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "clock", "--port", "/dev/ttyFAKE", "--hz", "100"],
+        ):
+            main()
+
+        mock_api.set_clock.assert_called_once_with(hz=100.0)

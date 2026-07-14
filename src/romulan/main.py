@@ -15,6 +15,7 @@ Examples:
     romulan hardware reset --assert
     romulan hardware request-addr
     romulan hardware peek --offset 0x7000 --count 16
+    romulan hardware clock --hz 100
 """
 
 import argparse
@@ -195,6 +196,19 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     _add_common_args(peek_parser)
 
+    # --- clock ---
+    clock_parser = sub.add_parser(
+        "clock",
+        help="Set the 65C02 PHI2 clock frequency",
+    )
+    clock_parser.add_argument(
+        "--hz",
+        type=float,
+        required=True,
+        help="Clock frequency in Hz (0.1..1000)",
+    )
+    _add_common_args(clock_parser)
+
     return parser
 
 
@@ -249,7 +263,7 @@ def _handle_hardware(args: argparse.Namespace) -> None:
 
     Opens a :class:`~romulan.hardware_api.HardwareAPI` on the resolved port and
     runs the requested operation (upload, capture, monitor, reset,
-    request-addr, or peek), printing results to stdout.
+    request-addr, peek, or clock), printing results to stdout.
 
     Side effects:
         Opens the serial port and drives the hardware. May call
@@ -321,6 +335,10 @@ def _handle_hardware(args: argparse.Namespace) -> None:
                 offset = _parse_int(args.offset)
                 result = api.peek(offset=offset, count=args.count)
                 print(f"ROM offset 0x{result.offset:04X} ({result.count} bytes): {result.data.hex()}")
+
+            elif cmd == "clock":
+                api.set_clock(hz=args.hz)
+                print(f"Clock set to {args.hz} Hz")
 
     except (HardwareAPIError, TimeoutError) as exc:
         print(f"ERROR: Hardware API failed: {exc}", file=sys.stderr)

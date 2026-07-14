@@ -144,6 +144,31 @@ class TestPeek:
             api.peek(offset=0, count=65)
 
 
+class TestSetClock:
+    def test_set_clock_success(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"clock","phi2_hz":100.0}',
+        )
+
+        api = _make_api(mock_serial)
+        api.set_clock(hz=100.0)
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["v"] == 1
+        assert msg["cmd"] == "clock"
+        assert msg["phi2_hz"] == 100.0
+
+    def test_set_clock_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="hz must be"):
+            api.set_clock(hz=0.05)
+        with pytest.raises(ValueError, match="hz must be"):
+            api.set_clock(hz=2000.0)
+
+
 class TestUploadRom:
     def test_upload_32kb_chunked(self, mock_serial):
         rom = bytes(range(256)) * (ROM_SIZE // 256)
