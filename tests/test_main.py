@@ -230,3 +230,39 @@ class TestHardwareVerbose:
             main()
 
         mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=False)
+
+    @patch("romulan.hardware_api.HardwareAPI")
+    def test_peek_hex_offset(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek parses a hex offset and prints the returned bytes."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.peek.return_value = MagicMock(offset=0x7000, count=3, data=b"\xA9\xAA\x05")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE", "--offset", "0x7000", "--count", "3"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=0x7000, count=3)
+
+    @patch("romulan.hardware_api.HardwareAPI")
+    def test_peek_decimal_offset(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek parses a decimal offset."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.peek.return_value = MagicMock(offset=28672, count=16, data=b"\xEA" * 16)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE", "--offset", "28672"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=28672, count=16)

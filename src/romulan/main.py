@@ -14,6 +14,7 @@ Examples:
     romulan hardware monitor --disable
     romulan hardware reset --assert
     romulan hardware request-addr
+    romulan hardware peek --offset 0x7000 --count 16
 """
 
 import argparse
@@ -173,7 +174,44 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     _add_common_args(addr_parser)
 
+    # --- peek ---
+    peek_parser = sub.add_parser(
+        "peek",
+        help="Read bytes back from the loaded ROM image",
+    )
+    peek_parser.add_argument(
+        "--offset",
+        type=str,
+        default="0x7000",
+        help="ROM offset to read from (hex or decimal; default: 0x7000)",
+    )
+    peek_parser.add_argument(
+        "--count",
+        type=int,
+        default=16,
+        help="Number of bytes to read, 1-64 (default: 16)",
+    )
+    _add_common_args(peek_parser)
+
     return parser
+
+
+def _parse_int(value: str) -> int:
+    """Parse an integer that may be given in decimal or hex.
+
+    Args:
+        value: A string representing an integer, e.g. ``"28672"`` or ``"0x7000"``.
+
+    Returns:
+        The parsed integer.
+
+    Raises:
+        argparse.ArgumentTypeError: If the value cannot be parsed.
+    """
+    try:
+        return int(value, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from exc
 
 
 def _resolve_port(port: str | None) -> str:
@@ -198,8 +236,8 @@ def _handle_hardware(args: argparse.Namespace) -> None:
     """Dispatch a parsed ``hardware`` sub-command against the hardware API.
 
     Opens a :class:`~romulan.hardware_api.HardwareAPI` on the resolved port and
-    runs the requested operation (upload, capture, monitor, reset, or
-    request-addr), printing results to stdout.
+    runs the requested operation (upload, capture, monitor, reset,
+    request-addr, or peek), printing results to stdout.
 
     Side effects:
         Opens the serial port and drives the hardware. May call
@@ -251,6 +289,11 @@ def _handle_hardware(args: argparse.Namespace) -> None:
             elif cmd == "request-addr":
                 addr = api.request_addr()
                 print(f"Current CPU address: 0x{addr:04X}")
+
+            elif cmd == "peek":
+                offset = _parse_int(args.offset)
+                result = api.peek(offset=offset, count=args.count)
+                print(f"ROM offset 0x{result.offset:04X} ({result.count} bytes): {result.data.hex()}")
 
     except (HardwareAPIError, TimeoutError) as exc:
         print(f"ERROR: Hardware API failed: {exc}", file=sys.stderr)

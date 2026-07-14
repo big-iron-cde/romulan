@@ -101,6 +101,8 @@ class StatusResponse:
         rom_active: Whether the ROM emulator is driving the bus.
         reset_asserted: Whether the CPU RESET line is asserted.
         last_addr: Last address seen on the bus, as a hex string.
+        last_data: Data byte from the last bus sample, as a hex string.
+        last_rw: Read/write flag from the last bus sample (0 = read, 1 = write).
         read_active: Whether a bus-capture read is currently running.
         monitor_enabled: Whether the ASCII monitor output is enabled.
         upload_active: Whether a ROM upload is in progress.
@@ -113,6 +115,23 @@ class StatusResponse:
     read_active: bool
     monitor_enabled: bool
     upload_active: bool = False
+    last_data: str = "00"
+    last_rw: int = 0
+
+
+@dataclass
+class PeekResponse:
+    """Response from the ``peek`` command returning ROM image bytes.
+
+    Attributes:
+        offset: Byte offset within ``rom_image[]`` that was read.
+        count: Number of bytes returned (may be clipped to ROM bounds).
+        data: The returned bytes.
+    """
+
+    offset: int
+    count: int
+    data: bytes
 
 
 @dataclass
@@ -295,10 +314,36 @@ def parse_status(msg: dict[str, Any]) -> StatusResponse:
         rom_active=bool(msg.get("rom_active")),
         reset_asserted=bool(msg.get("reset_asserted")),
         last_addr=str(msg.get("last_addr", "0000")),
+        last_data=str(msg.get("last_data", "00")),
+        last_rw=int(msg.get("last_rw", 0)),
         read_active=bool(msg.get("read_active")),
         monitor_enabled=bool(msg.get("monitor_enabled")),
         upload_active=bool(msg.get("upload_active")),
     )
+
+
+def parse_peek_response(msg: dict[str, Any]) -> PeekResponse:
+    """Parse a ``peek`` command response into a :class:`PeekResponse`.
+
+    Args:
+        msg: A parsed frame expected to be a successful ``peek`` response.
+
+    Returns:
+        The decoded offset, count, and bytes.
+
+    Raises:
+        ProtocolV1Error: If the frame reports an error, the version is
+            unsupported, or the hex data is malformed.
+    """
+    parse_command_response(msg)
+    offset = int(msg.get("offset", 0))
+    count = int(msg.get("count", 0))
+    hex_data = str(msg.get("data", ""))
+    try:
+        data = bytes.fromhex(hex_data)
+    except ValueError as exc:
+        raise ProtocolV1Error(f"peek returned invalid hex data: {exc}") from exc
+    return PeekResponse(offset=offset, count=count, data=data)
 
 
 def parse_upload_response(msg: dict[str, Any]) -> UploadProgress:

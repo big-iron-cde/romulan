@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from romulan.hardware_api import CaptureResult, HardwareAPI, HardwareAPIError
-from romulan.protocol_v1 import CHUNK_RAW_MAX, ROM_SIZE, build_request
+from romulan.protocol_v1 import CHUNK_RAW_MAX, ROM_SIZE, build_request, parse_peek_response
 
 ENQ = b"\x05"
 STX = b"\x02"
@@ -92,6 +92,33 @@ class TestReset:
         assert msg["v"] == 1
         assert msg["cmd"] == "reset"
         assert msg["assert"] is True
+
+
+class TestPeek:
+    def test_peek_success(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"peek","offset":28672,"count":3,"data":"A9AA05"}',
+        )
+
+        api = _make_api(mock_serial)
+        result = api.peek(offset=0x7000, count=3)
+        assert result.offset == 0x7000
+        assert result.count == 3
+        assert result.data == b"\xA9\xAA\x05"
+
+    def test_peek_offset_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="offset must be"):
+            api.peek(offset=ROM_SIZE, count=1)
+
+    def test_peek_count_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="count must be"):
+            api.peek(offset=0, count=0)
+        with pytest.raises(ValueError, match="count must be"):
+            api.peek(offset=0, count=65)
 
 
 class TestUploadRom:

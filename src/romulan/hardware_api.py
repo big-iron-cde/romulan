@@ -31,6 +31,7 @@ from .protocol_v1 import (
     CHUNK_RAW_MAX,
     ROM_SIZE,
     CycleEvent,
+    PeekResponse,
     ProtocolV1Error,
     ReadResult,
     StatusResponse,
@@ -38,6 +39,7 @@ from .protocol_v1 import (
     parse_cycle_event,
     parse_done_event,
     parse_frame,
+    parse_peek_response,
     parse_status,
     parse_upload_response,
 )
@@ -350,7 +352,7 @@ class HardwareAPI:
 
         Returns:
             A :class:`~romulan.protocol_v1.StatusResponse` describing the
-            clock frequency, ROM/reset/monitor state, and last bus address.
+            clock frequency, ROM/reset/monitor state, and last bus sample.
 
         Raises:
             HardwareAPIError: If the firmware reports an error.
@@ -358,6 +360,44 @@ class HardwareAPI:
         """
         resp = self._exchange_json(build_request("status", req_id=self._next_id()))
         return parse_status(resp)
+
+    def peek(self, offset: int, count: int = 16) -> PeekResponse:
+        """Read back bytes from the loaded ``rom_image[]``.
+
+        This is useful for verifying that an upload landed at the expected
+        offsets before releasing RESET.
+
+        Args:
+            offset: Byte offset within the 32 KB ROM image.
+            count: Number of bytes to read (1-64; firmware caps at 64).
+
+        Returns:
+            A :class:`~romulan.protocol_v1.PeekResponse` with the offset,
+            count, and returned bytes.
+
+        Raises:
+            ValueError: If ``offset`` or ``count`` is out of range.
+            HardwareAPIError: If the firmware reports an error or returns
+                malformed data.
+            TimeoutError: If the Pico does not respond in time.
+        """
+        self._log(f"CALL peek(offset={offset}, count={count})")
+        if not 0 <= offset < ROM_SIZE:
+            raise ValueError(f"offset must be within [0, {ROM_SIZE})")
+        if count <= 0 or count > 64:
+            raise ValueError("count must be 1..64")
+
+        resp = self._exchange_json(
+            build_request(
+                "peek",
+                req_id=self._next_id(),
+                offset=offset,
+                count=count,
+            )
+        )
+        result = parse_peek_response(resp)
+        self._log(f"RET peek -> {result.data.hex()}")
+        return result
 
     def upload_rom(self, data: bytes) -> dict[str, Any]:
         """Upload a full 32 KB ROM image to the Pico in a begin/chunk/commit sequence.

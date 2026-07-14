@@ -17,6 +17,7 @@ from romulan.protocol_v1 import (
     parse_cycle_event,
     parse_done_event,
     parse_frame,
+    parse_peek_response,
     parse_status,
     parse_upload_response,
 )
@@ -84,13 +85,45 @@ def test_parse_status():
         "rom_active": True,
         "reset_asserted": False,
         "last_addr": "4000",
+        "last_data": "18",
+        "last_rw": 0,
         "read_active": False,
         "monitor_enabled": False,
         "upload_active": False,
     }
     st = parse_status(msg)
     assert st.last_addr == "4000"
+    assert st.last_data == "18"
+    assert st.last_rw == 0
     assert st.phi2_hz == 0.2
+
+
+def test_parse_peek_response():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "peek",
+        "offset": 28672,
+        "count": 3,
+        "data": "A9AA05",
+    }
+    peek = parse_peek_response(msg)
+    assert peek.offset == 28672
+    assert peek.count == 3
+    assert peek.data == b"\xA9\xAA\x05"
+
+
+def test_parse_peek_response_rejects_invalid_hex():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "peek",
+        "offset": 0,
+        "count": 1,
+        "data": "ZZ",
+    }
+    with pytest.raises(ProtocolV1Error, match="invalid hex"):
+        parse_peek_response(msg)
 
 
 def test_parse_upload_commit():
