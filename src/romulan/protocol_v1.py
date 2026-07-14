@@ -19,6 +19,8 @@ PROTO_JSON_MAX = 48 * 1024
 ROM_SIZE = 0x8000
 # Must match piclone UPLOAD_CHUNK_RAW_MAX — one chunk can carry the whole ROM.
 CHUNK_RAW_MAX = ROM_SIZE
+# Default number of capture cycles to request per read_event poll.
+READ_EVENT_BATCH_SIZE = 32
 
 
 class ProtocolV1Error(Exception):
@@ -295,6 +297,41 @@ def parse_done_event(msg: dict[str, Any]) -> DoneEvent:
         cycles=int(msg.get("cycles", 0)),
         addr=str(msg.get("addr", "")),
     )
+
+
+def parse_cycles_event(msg: dict[str, Any]) -> list[CycleEvent]:
+    """Parse a batched ``cycles`` event frame into a list of :class:`CycleEvent`.
+
+    Args:
+        msg: A parsed frame expected to be a ``cycles`` event.
+
+    Returns:
+        The captured bus cycles in order.
+
+    Raises:
+        ProtocolV1Error: If the frame is not a ``cycles`` event, the version
+            is unsupported, or a cycle entry is malformed.
+    """
+    _require_version(msg)
+    if msg.get("type") != "event" or msg.get("event") != "cycles":
+        raise ProtocolV1Error(f"expected cycles event, got {msg!r}")
+    raw_cycles = msg.get("cycles")
+    if not isinstance(raw_cycles, list):
+        raise ProtocolV1Error("cycles event missing 'cycles' array")
+
+    events: list[CycleEvent] = []
+    for item in raw_cycles:
+        if not isinstance(item, dict):
+            raise ProtocolV1Error(f"cycle entry must be an object, got {item!r}")
+        events.append(
+            CycleEvent(
+                seq=int(item["seq"]),
+                addr=str(item["addr"]),
+                data=str(item["data"]),
+                rw=int(item["rw"]),
+            )
+        )
+    return events
 
 
 def parse_status(msg: dict[str, Any]) -> StatusResponse:

@@ -15,6 +15,7 @@ from romulan.protocol_v1 import (
     build_request,
     parse_command_response,
     parse_cycle_event,
+    parse_cycles_event,
     parse_done_event,
     parse_frame,
     parse_peek_response,
@@ -74,6 +75,22 @@ def test_parse_done_event():
     done = parse_done_event(msg)
     assert done.reason == "stp"
     assert done.cycles == 3
+
+
+def test_parse_cycles_event():
+    msg = {
+        "v": 1,
+        "type": "event",
+        "event": "cycles",
+        "cycles": [
+            {"seq": 1, "addr": "8000", "data": "18", "rw": 0},
+            {"seq": 2, "addr": "8001", "data": "A9", "rw": 0},
+        ],
+    }
+    cycles = parse_cycles_event(msg)
+    assert len(cycles) == 2
+    assert cycles[0].addr == "8000"
+    assert cycles[1].data == "A9"
 
 
 def test_parse_status():

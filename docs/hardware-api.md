@@ -47,7 +47,7 @@ All JSON payloads include `"v": 1`. An optional `"id"` field is echoed in respon
 | `request_addr` | Read current CPU address |
 | `read` | Capture bus cycles until STP or max cycles |
 | `clock` | Set PHI2 clock frequency (0.1–1000 Hz) |
-| `status` | Query firmware state (clock, reset, ROM, monitor) |
+| `status` | Query firmware state (clock, reset, ROM, monitor, last bus sample) |
 
 ### ROM upload
 
@@ -61,12 +61,12 @@ The upload is a three-phase sequence with base64-encoded chunks (max 1,476 raw b
 
 ### Bus capture
 
-Send `{"v":1,"cmd":"read","until":"stp","max_cycles":N}` and receive streaming event frames:
+Send `{"v":1,"cmd":"read","until":"stp","max_cycles":N,"batch_size":32}` and receive batched event frames:
 
-- `{"type":"event","event":"cycle",...}` — one CPU bus cycle
+- `{"type":"event","event":"cycles","cycles":[...]}` — up to `batch_size` CPU bus cycles
 - `{"type":"event","event":"done",...}` — capture finished
 
-`read_until_stp()` disables the monitor before starting capture.
+`read_until_stp()` disables the monitor before starting capture. The current PHI2 clock speed is preserved unless you pass `phi2_hz`. Batching reduces USB round trips; the default batch size is `READ_EVENT_BATCH_SIZE` (32).
 
 ### Clock
 
@@ -85,6 +85,17 @@ uv run romulan hardware clock --hz 100
 The supported range is **0.1–1000 Hz**. The `read` command also accepts an
 optional `phi2_hz` argument if you want to change the clock and capture in
 one step.
+
+### Status
+
+Query the firmware for its current state:
+
+```bash
+uv run romulan hardware status
+```
+
+This prints the current PHI2 frequency, ROM/reset/monitor state, and the last
+bus sample (`last_addr`, `last_data`, `last_rw`).
 
 ## Important notes
 

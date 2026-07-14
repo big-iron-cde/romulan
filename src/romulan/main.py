@@ -16,6 +16,7 @@ Examples:
     romulan hardware request-addr
     romulan hardware peek --offset 0x7000 --count 16
     romulan hardware clock --hz 100
+    romulan hardware status
 """
 
 import argparse
@@ -209,6 +210,13 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     _add_common_args(clock_parser)
 
+    # --- status ---
+    status_parser = sub.add_parser(
+        "status",
+        help="Query firmware state (clock, reset, ROM, monitor, last bus sample)",
+    )
+    _add_common_args(status_parser)
+
     return parser
 
 
@@ -263,7 +271,7 @@ def _handle_hardware(args: argparse.Namespace) -> None:
 
     Opens a :class:`~romulan.hardware_api.HardwareAPI` on the resolved port and
     runs the requested operation (upload, capture, monitor, reset,
-    request-addr, peek, or clock), printing results to stdout.
+    request-addr, peek, clock, or status), printing results to stdout.
 
     Side effects:
         Opens the serial port and drives the hardware. May call
@@ -339,6 +347,18 @@ def _handle_hardware(args: argparse.Namespace) -> None:
             elif cmd == "clock":
                 api.set_clock(hz=args.hz)
                 print(f"Clock set to {args.hz} Hz")
+
+            elif cmd == "status":
+                st = api.status()
+                print(f"PHI2: {st.phi2_hz:.1f} Hz")
+                print(f"ROM active: {st.rom_active}")
+                print(f"Reset asserted: {st.reset_asserted}")
+                print(f"Read active: {st.read_active}")
+                print(f"Monitor enabled: {st.monitor_enabled}")
+                print(f"Upload active: {st.upload_active}")
+                print(f"Last addr: 0x{st.last_addr}")
+                print(f"Last data: 0x{st.last_data}")
+                print(f"Last rw: {st.last_rw} ({'read' if st.last_rw == 0 else 'write'})")
 
     except (HardwareAPIError, TimeoutError) as exc:
         print(f"ERROR: Hardware API failed: {exc}", file=sys.stderr)

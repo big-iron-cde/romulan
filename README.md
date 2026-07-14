@@ -69,6 +69,9 @@ uv run romulan hardware peek --offset 0x7000 --count 16
 
 # Set the 65C02 clock speed
 uv run romulan hardware clock --hz 100
+
+# Query firmware state
+uv run romulan hardware status
 ```
 
 ### Python client

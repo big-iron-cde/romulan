@@ -304,3 +304,31 @@ class TestHardwareVerbose:
             main()
 
         mock_api.set_clock.assert_called_once_with(hz=100.0)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_status(self, mock_hw_cls: MagicMock) -> None:
+        """hardware status prints the firmware status snapshot."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.status.return_value = MagicMock(
+            phi2_hz=1000.0,
+            rom_active=True,
+            reset_asserted=False,
+            read_active=False,
+            monitor_enabled=False,
+            upload_active=False,
+            last_addr="F000",
+            last_data="4C",
+            last_rw=0,
+        )
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "status", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.status.assert_called_once_with()

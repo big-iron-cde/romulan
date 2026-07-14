@@ -29,6 +29,7 @@ import serial
 
 from .protocol_v1 import (
     CHUNK_RAW_MAX,
+    READ_EVENT_BATCH_SIZE,
     ROM_SIZE,
     CycleEvent,
     PeekResponse,
@@ -36,7 +37,7 @@ from .protocol_v1 import (
     ReadResult,
     StatusResponse,
     build_request,
-    parse_cycle_event,
+    parse_cycles_event,
     parse_done_event,
     parse_frame,
     parse_peek_response,
@@ -50,9 +51,6 @@ STX = 0x02
 ACK = 0x06
 EOT = 0x04
 NACK = 0x15
-
-# PHI2 rate requested when arming bus capture (must match piclone default on make-it-faster).
-CAPTURE_PHI2_HZ = 1000.0
 
 
 class HardwareAPIError(Exception):
@@ -504,16 +502,18 @@ class HardwareAPI:
         max_cycles: int = 10000,
         frame_timeout: float | None = None,
         on_cycle: Callable[[CycleEvent], None] | None = None,
+        batch_size: int = READ_EVENT_BATCH_SIZE,
+        phi2_hz: float | None = None,
     ) -> CaptureResult:
         """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
 
         Holds reset, arms ``read``, then releases reset so capture starts from
-        the reset vector (typically ``$8000``). Polls ``read_event`` for cycle
-        and done frames.
+        the reset vector (typically ``$8000``). Polls ``read_event`` for batched
+        cycle and done frames.
 
         Side effects:
-            Disables the ASCII monitor, asserts then releases CPU reset, and
-            may change PHI2 via ``phi2_hz`` on the read command.
+            Disables the ASCII monitor, asserts then releases CPU reset. The
+            current PHI2 clock is preserved unless ``phi2_hz`` is provided.
 
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
@@ -522,6 +522,10 @@ class HardwareAPI:
                 for cycle/done events. Defaults to :attr:`timeout`.
             on_cycle: Optional callback invoked for each captured cycle (e.g.
                 for live CLI output).
+            batch_size: Number of cycles to request per ``read_event`` poll.
+                Defaults to :data:`READ_EVENT_BATCH_SIZE`.
+            phi2_hz: Optional clock frequency to set when arming capture.
+                If omitted, the current clock speed is preserved.
 
         Returns:
             A :class:`CaptureResult` with the stop reason and captured cycles.
@@ -532,21 +536,26 @@ class HardwareAPI:
             TimeoutError: If the capture does not complete in time.
         """
         resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
-        self._emit({"type": "call", "method": "read_until_stp", "max_cycles": max_cycles})
+        emit_payload: dict[str, Any] = {"max_cycles": max_cycles, "batch_size": batch_size}
+        if phi2_hz is not None:
+            emit_payload["phi2_hz"] = phi2_hz
+        self._emit({"type": "call", "method": "read_until_stp", **emit_payload})
         self.monitor(enable=False)
         self._drain_input()
 
         # Restart CPU from reset vector once capture is armed.
         self.reset(assert_reset=True)
 
+        read_fields: dict[str, Any] = {
+            "until": "stp",
+            "max_cycles": max_cycles,
+            "batch_size": batch_size,
+        }
+        if phi2_hz is not None:
+            read_fields["phi2_hz"] = phi2_hz
+
         ack = self._exchange_json(
-            build_request(
-                "read",
-                req_id=self._next_id(),
-                until="stp",
-                max_cycles=max_cycles,
-                phi2_hz=CAPTURE_PHI2_HZ,
-            )
+            build_request("read", req_id=self._next_id(), **read_fields)
         )
         if not ack.get("ok"):
             raise HardwareAPIError(f"read rejected: {ack}")
@@ -564,14 +573,19 @@ class HardwareAPI:
         try:
             while time.time() < deadline:
                 msg = self._exchange_json(
-                    build_request("read_event", req_id=self._next_id())
+                    build_request(
+                        "read_event",
+                        req_id=self._next_id(),
+                        batch_size=batch_size,
+                    )
                 )
                 event = msg.get("event")
-                if msg.get("type") == "event" and event == "cycle":
-                    cycle = parse_cycle_event(msg)
-                    if on_cycle is not None:
-                        on_cycle(cycle)
-                    cycles.append(cycle)
+                if msg.get("type") == "event" and event == "cycles":
+                    batch = parse_cycles_event(msg)
+                    for cycle in batch:
+                        if on_cycle is not None:
+                            on_cycle(cycle)
+                    cycles.extend(batch)
                     deadline = time.time() + resolved_timeout
                 elif msg.get("type") == "event" and event == "done":
                     done = parse_done_event(msg)
