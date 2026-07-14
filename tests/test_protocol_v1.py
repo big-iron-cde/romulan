@@ -17,6 +17,7 @@ from romulan.protocol_v1 import (
     parse_cycle_event,
     parse_cycles_event,
     parse_done_event,
+    parse_drive_response,
     parse_frame,
     parse_peek_response,
     parse_status,
@@ -155,6 +156,32 @@ def test_parse_upload_commit():
     up = parse_upload_response(msg)
     assert up.reset_vector == "8000"
     assert up.received == ROM_SIZE
+
+
+def test_parse_drive_response_enabled():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "drive",
+        "enabled": True,
+        "value": "A5",
+    }
+    dr = parse_drive_response(msg)
+    assert dr.enabled is True
+    assert dr.value == "A5"
+
+
+def test_parse_drive_response_disabled():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "drive",
+        "enabled": False,
+        "value": "00",
+    }
+    dr = parse_drive_response(msg)
+    assert dr.enabled is False
+    assert dr.value == "00"
 
 
 def test_chunk_raw_max():

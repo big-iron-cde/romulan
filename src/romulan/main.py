@@ -210,6 +210,25 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     _add_common_args(clock_parser)
 
+    # --- drive ---
+    drive_parser = sub.add_parser(
+        "drive",
+        help="Force D0-D7 to a byte (diagnostic) or release the bus",
+    )
+    drive_parser.add_argument(
+        "--value",
+        type=str,
+        default=None,
+        help="2-digit hex byte to drive on D0-D7 (omit to release)",
+    )
+    drive_parser.add_argument(
+        "--disable",
+        action="store_true",
+        dest="disable",
+        help="Release D0-D7 and return to normal emulation",
+    )
+    _add_common_args(drive_parser)
+
     # --- status ---
     status_parser = sub.add_parser(
         "status",
@@ -347,6 +366,16 @@ def _handle_hardware(args: argparse.Namespace) -> None:
             elif cmd == "clock":
                 api.set_clock(hz=args.hz)
                 print(f"Clock set to {args.hz} Hz")
+
+            elif cmd == "drive":
+                if args.disable and args.value is not None:
+                    print("ERROR: Cannot specify both --value and --disable", file=sys.stderr)
+                    sys.exit(1)
+                if args.disable:
+                    result = api.drive(None)
+                else:
+                    result = api.drive(args.value)
+                print(f"Drive force: {'enabled' if result.enabled else 'disabled'}, value=0x{result.value}")
 
             elif cmd == "status":
                 st = api.status()

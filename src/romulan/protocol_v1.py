@@ -139,6 +139,19 @@ class PeekResponse:
 
 
 @dataclass
+class DriveResponse:
+    """Response from the ``drive`` diagnostic command.
+
+    Attributes:
+        enabled: Whether the Pico is currently forcing D0-D7 as outputs.
+        value: The forced byte as a 2-digit hex string, or ``"00"`` when disabled.
+    """
+
+    enabled: bool
+    value: str = "00"
+
+
+@dataclass
 class UploadProgress:
     """Progress reported by the firmware during a ROM upload.
 
@@ -383,6 +396,26 @@ def parse_peek_response(msg: dict[str, Any]) -> PeekResponse:
     except ValueError as exc:
         raise ProtocolV1Error(f"peek returned invalid hex data: {exc}") from exc
     return PeekResponse(offset=offset, count=count, data=data)
+
+
+def parse_drive_response(msg: dict[str, Any]) -> DriveResponse:
+    """Parse a ``drive`` command response into a :class:`DriveResponse`.
+
+    Args:
+        msg: A parsed frame expected to be a successful ``drive`` response.
+
+    Returns:
+        The decoded drive force state.
+
+    Raises:
+        ProtocolV1Error: If the frame reports an error or the version is
+            unsupported.
+    """
+    parse_command_response(msg)
+    return DriveResponse(
+        enabled=bool(msg.get("enabled")),
+        value=str(msg.get("value", "00")),
+    )
 
 
 def parse_upload_response(msg: dict[str, Any]) -> UploadProgress:

@@ -332,3 +332,39 @@ class TestHardwareVerbose:
             main()
 
         mock_api.status.assert_called_once_with()
+
+    @patch("romulan.main.HardwareAPI")
+    def test_drive_enable(self, mock_hw_cls: MagicMock) -> None:
+        """hardware drive --value calls api.drive with the byte."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.drive.return_value = MagicMock(enabled=True, value="A5")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "drive", "--port", "/dev/ttyFAKE", "--value", "A5"],
+        ):
+            main()
+
+        mock_api.drive.assert_called_once_with("A5")
+
+    @patch("romulan.main.HardwareAPI")
+    def test_drive_disable(self, mock_hw_cls: MagicMock) -> None:
+        """hardware drive --disable calls api.drive(None)."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.drive.return_value = MagicMock(enabled=False, value="00")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "drive", "--port", "/dev/ttyFAKE", "--disable"],
+        ):
+            main()
+
+        mock_api.drive.assert_called_once_with(None)

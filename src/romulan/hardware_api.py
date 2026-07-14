@@ -32,6 +32,7 @@ from .protocol_v1 import (
     READ_EVENT_BATCH_SIZE,
     ROM_SIZE,
     CycleEvent,
+    DriveResponse,
     PeekResponse,
     ProtocolV1Error,
     ReadResult,
@@ -39,6 +40,7 @@ from .protocol_v1 import (
     build_request,
     parse_cycles_event,
     parse_done_event,
+    parse_drive_response,
     parse_frame,
     parse_peek_response,
     parse_status,
@@ -427,6 +429,47 @@ class HardwareAPI:
             )
         )
         self._emit({"type": "return", "method": "set_clock"})
+
+    def drive(self, value: int | str | None = None) -> DriveResponse:
+        """Force the Pico to drive D0-D7 with a byte, or release the bus.
+
+        This is a diagnostic command. The CPU should be in reset or removed
+        before forcing the data bus, otherwise the Pico and CPU contend.
+
+        Args:
+            value: Byte to drive on D0-D7. Pass ``None`` (or omit) to release
+                the bus and return to normal ROM emulation.
+
+        Returns:
+            A :class:`~romulan.protocol_v1.DriveResponse` with the new state.
+
+        Raises:
+            ValueError: If ``value`` is outside 0..255.
+            HardwareAPIError: If the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
+        if value is None:
+            self._emit({"type": "call", "method": "drive", "enable": False})
+            resp = self._exchange_json(
+                build_request("drive", req_id=self._next_id(), enable=False)
+            )
+        else:
+            if isinstance(value, str):
+                value = int(value, 16)
+            if not 0 <= value <= 0xFF:
+                raise ValueError("value must be a byte (0..255)")
+            hex_value = f"{value:02X}"
+            self._emit({"type": "call", "method": "drive", "value": hex_value})
+            resp = self._exchange_json(
+                build_request(
+                    "drive",
+                    req_id=self._next_id(),
+                    value=hex_value,
+                )
+            )
+        result = parse_drive_response(resp)
+        self._emit({"type": "return", "method": "drive", "enabled": result.enabled, "value": result.value})
+        return result
 
     def upload_rom(self, data: bytes) -> dict[str, Any]:
         """Upload a full 32 KB ROM image to the Pico in a begin/chunk/commit sequence.

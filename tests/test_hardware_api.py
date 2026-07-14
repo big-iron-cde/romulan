@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from romulan.hardware_api import CaptureResult, HardwareAPI, HardwareAPIError
-from romulan.protocol_v1 import CHUNK_RAW_MAX, ROM_SIZE, build_request, parse_peek_response
+from romulan.protocol_v1 import CHUNK_RAW_MAX, ROM_SIZE, build_request, parse_drive_response, parse_peek_response
 
 ENQ = b"\x05"
 STX = b"\x02"
@@ -171,6 +171,57 @@ class TestSetClock:
             api.set_clock(hz=0.05)
         with pytest.raises(ValueError, match="hz must be"):
             api.set_clock(hz=2000.0)
+
+
+class TestDrive:
+    def test_drive_enable_with_int(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"drive","enabled":true,"value":"A5"}')
+
+        api = _make_api(mock_serial)
+        result = api.drive(0xA5)
+        assert result.enabled is True
+        assert result.value == "A5"
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["v"] == 1
+        assert msg["cmd"] == "drive"
+        assert msg["value"] == "A5"
+
+    def test_drive_enable_with_hex_string(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"drive","enabled":true,"value":"FF"}')
+
+        api = _make_api(mock_serial)
+        result = api.drive("FF")
+        assert result.enabled is True
+        assert result.value == "FF"
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["value"] == "FF"
+
+    def test_drive_disable(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"drive","enabled":false,"value":"00"}')
+
+        api = _make_api(mock_serial)
+        result = api.drive(None)
+        assert result.enabled is False
+        assert result.value == "00"
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["cmd"] == "drive"
+        assert msg["enable"] is False
+
+    def test_drive_value_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="must be a byte"):
+            api.drive(256)
+        with pytest.raises(ValueError, match="must be a byte"):
+            api.drive(-1)
 
 
 class TestUploadRom:
