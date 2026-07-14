@@ -35,10 +35,9 @@ def test_out_of_range() -> None:
 
 @pytest.mark.range
 def test_in_range() -> None:
-    """Ensures valid numeric values inside 0x00–0xFF are accepted."""
-    in_range_list = [0xDA, 0x3E, 0xF5]
+    """Ensures valid single-byte opcodes are accepted."""
+    in_range_list = [0xEA, 0x18, 0xDB]
 
-    # No errors should be raised
     error_list = []
     verify_instructions(data=in_range_list, error_list=error_list)
     assert len(error_list) == 0
@@ -62,10 +61,10 @@ def test_invalid_opcodes() -> None:
 
 
 def test_valid_opcodes() -> None:
-    """Ensures valid opcodes are accepted."""
-    valid_opcodes_list = [0xFF, 0x59, 0xA9]
+    """Ensures valid opcode sequences are accepted."""
+    # CLC; LDA #$05; NOP
+    valid_opcodes_list = [0x18, 0xA9, 0x05, 0xEA]
 
-    # Checks all opcodes in the list, should not raise an error
     error_list = []
     verify_instructions(data=valid_opcodes_list, error_list=error_list)
     assert len(error_list) == 0
@@ -93,15 +92,22 @@ def test_immediate_memory() -> None:
 
 
 def test_addressing_mode() -> None:
-    """Ensures that opcodes become valid when used as a memory instruction (2 byte version)."""
+    """Ensures operand bytes that look like invalid opcodes are not flagged."""
     addressing_list = [
-        [0x00, 0x02, 0x03],
-        [0x8E, 0x73, 0xC2],
-        [0xAC, 0x5C, 0xEB],
+        [0x8D, 0x02, 0x03],  # STA $0302
+        [0x8E, 0x73, 0xC2],  # STX $C273
+        [0xAC, 0x5C, 0xEB],  # LDY $EB5C
     ]
 
-    # Checks all lists of opcodes and memory instructions, should not raise an error
     for address_list in addressing_list:
         error_list = []
         verify_instructions(data=address_list, error_list=error_list)
         assert len(error_list) == 0
+
+
+def test_leading_invalid_not_excused_by_later_opcode() -> None:
+    """Regression: first-byte invalid must not use Python negative indexing."""
+    error_list = []
+    verify_instructions(data=[0x02, 0xA9], error_list=error_list)
+    assert len(error_list) == 1
+    assert "02" in error_list[0]

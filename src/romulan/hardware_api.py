@@ -22,8 +22,8 @@ import json
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Callable
 
 import serial
 
@@ -51,6 +51,8 @@ ACK = 0x06
 EOT = 0x04
 NACK = 0x15
 
+# PHI2 rate requested when arming bus capture (must match piclone default on make-it-faster).
+CAPTURE_PHI2_HZ = 1000.0
 
 
 class HardwareAPIError(Exception):
@@ -136,8 +138,7 @@ class HardwareAPI:
         self._open()
 
     def _open(self) -> None:
-        """Open the serial port, settle briefly, and flush stale input."""
-        self._log(f"Opened {self.port} @ {self.baudrate}")
+        self._emit({"type": "open", "port": self.port, "baudrate": self.baudrate})
         self._ser = serial.Serial(
             self.port,
             self.baudrate,
@@ -153,7 +154,7 @@ class HardwareAPI:
         Safe to call multiple times; subsequent calls are no-ops.
         """
         if self._ser is not None:
-            self._log("Closed")
+            self._emit({"type": "close"})
             self._ser.close()
             self._ser = None
 
@@ -179,17 +180,19 @@ class HardwareAPI:
             raise HardwareAPIError("Serial port is closed")
         return self._ser
 
-    def _log(self, msg: str) -> None:
+    def _emit(self, event: dict[str, Any]) -> None:
         """Write a trace message to stderr when ``verbose`` is enabled."""
         if self.verbose:
-            print(f"[HW] {msg}", file=sys.stderr, flush=True)
+            print(json.dumps(event, separators=(",", ":"), ensure_ascii=False), file=sys.stderr, flush=True)
 
-    @staticmethod
-    def _payload_preview(payload: bytes) -> str:
+    def _payload_event(self, direction: str, payload: bytes) -> dict[str, Any]:
+        event: dict[str, Any] = {"type": direction}
         try:
-            return payload.decode("utf-8")
-        except UnicodeDecodeError:
-            return f"<binary, {len(payload)} bytes>"
+            text = payload.decode("utf-8")
+            event["payload"] = json.loads(text)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            event["payload"] = {"binary": True, "bytes": len(payload)}
+        return event
 
     def _sync_to_byte(self, acceptable: set[int], timeout: float | None = None) -> int:
         wait = self.timeout if timeout is None else timeout
@@ -197,9 +200,13 @@ class HardwareAPI:
         while time.time() < deadline:
             b = self.ser.read(1)
             if b and b[0] in acceptable:
+                if b[0] == ACK:
+                    self._emit({"type": "ack"})
+                elif b[0] == NACK:
+                    self._emit({"type": "nack"})
                 return b[0]
         labels = ", ".join(f"0x{v:02X}" for v in sorted(acceptable))
-        self._log(f"ERROR: timed out waiting for {labels}")
+        self._emit({"type": "error", "error": "timeout", "detail": f"timed out waiting for {labels}"})
         raise TimeoutError(f"timed out waiting for {labels}")
 
     def _write_byte(self, value: int) -> None:
@@ -223,34 +230,34 @@ class HardwareAPI:
                     self._write_byte(ACK)
                     return bytes(buf)
                 buf.append(byte)
-        self._log("ERROR: timed out waiting for EOT in response payload")
+        self._emit({"type": "error", "error": "timeout", "detail": "timed out waiting for EOT in response payload"})
         raise TimeoutError("timed out waiting for EOT in response payload")
 
     def _send_frame_host(self, payload: bytes) -> None:
-        self._log(f"SEND: {self._payload_preview(payload)}")
+        self._emit(self._payload_event("send", payload))
         self._write_byte(ENQ)
         self._write_byte(STX)
         if self._sync_to_byte({ACK, NACK}) != ACK:
-            self._log("ERROR: Pico responded with NACK")
+            self._emit({"type": "error", "error": "nack", "detail": "Pico responded with NACK"})
             raise HardwareAPIError("Pico responded with NACK")
         self.ser.write(payload)
         self._write_byte(EOT)
         if self._sync_to_byte({ACK, NACK}) != ACK:
-            self._log("ERROR: Pico responded with NACK")
+            self._emit({"type": "error", "error": "nack", "detail": "Pico responded with NACK"})
             raise HardwareAPIError("Pico responded with NACK")
 
     def _send_frame(self, payload: bytes) -> bytes:
         self._send_frame_host(payload)
         self._sync_to_byte({ENQ})
         raw = self._read_frame_payload()
-        self._log(f"RECV: {self._payload_preview(raw)}")
+        self._emit(self._payload_event("recv", raw))
         return raw
 
     def _recv_json_frame(self, timeout: float | None = None) -> dict[str, Any]:
         wait = self.timeout if timeout is None else timeout
         self._sync_to_byte({ENQ}, timeout=wait)
         raw = self._read_frame_payload(timeout=wait)
-        self._log(f"RECV: {self._payload_preview(raw)}")
+        self._emit(self._payload_event("recv", raw))
         return parse_frame(raw)
 
     def _parse_response(self, raw: bytes) -> dict[str, Any]:
@@ -297,13 +304,13 @@ class HardwareAPI:
                 or the firmware reports an error.
             TimeoutError: If the Pico does not respond in time.
         """
-        self._log("CALL request_addr()")
+        self._emit({"type": "call", "method": "request_addr"})
         resp = self._exchange_json(build_request("request_addr", req_id=self._next_id()))
         addr = resp.get("addr")
         if addr is None:
             raise HardwareAPIError(f"Missing 'addr' in response: {resp!r}")
         addr_int = self._parse_addr(addr)
-        self._log(f"RET request_addr -> {addr_int}")
+        self._emit({"type": "ret", "method": "request_addr", "result": addr_int})
         return addr_int
 
     def reset(self, assert_reset: bool) -> None:
@@ -321,11 +328,11 @@ class HardwareAPI:
             HardwareAPIError: If the firmware reports an error.
             TimeoutError: If the Pico does not respond in time.
         """
-        self._log(f"CALL reset(assert_reset={assert_reset})")
+        self._emit({"type": "call", "method": "reset", "assert_reset": assert_reset})
         self._exchange_json(
             build_request("reset", req_id=self._next_id(), assert_reset=assert_reset)
         )
-        self._log("RET reset")
+        self._emit({"type": "ret", "method": "reset"})
 
     def monitor(self, enable: bool) -> None:
         """Enable or disable the firmware's unstructured ASCII monitor output.
@@ -341,11 +348,11 @@ class HardwareAPI:
             HardwareAPIError: If the firmware reports an error.
             TimeoutError: If the Pico does not respond in time.
         """
-        self._log(f"CALL monitor(enable={enable})")
+        self._emit({"type": "call", "method": "monitor", "enable": enable})
         self._exchange_json(
             build_request("monitor", req_id=self._next_id(), enable=enable)
         )
-        self._log("RET monitor")
+        self._emit({"type": "ret", "method": "monitor"})
 
     def status(self) -> StatusResponse:
         """Query the firmware for its current status.
@@ -421,7 +428,7 @@ class HardwareAPI:
             HardwareAPIError: If a chunk stalls or the firmware reports an error.
             TimeoutError: If the Pico does not respond in time.
         """
-        self._log(f"CALL upload_rom(size={len(data)})")
+        self._emit({"type": "call", "method": "upload_rom", "size": len(data)})
         if len(data) != ROM_SIZE:
             raise ValueError(f"ROM must be exactly {ROM_SIZE} bytes, got {len(data)}")
 
@@ -465,30 +472,32 @@ class HardwareAPI:
             "reset_vector": final.reset_vector,
             "expected": progress.expected,
         }
-        self._log(f"RET upload_rom -> {result}")
+        self._emit({"type": "ret", "method": "upload_rom", "result": result})
         return result
 
     def read_until_stp(
         self,
         max_cycles: int = 10000,
         frame_timeout: float | None = None,
+        on_cycle: Callable[[CycleEvent], None] | None = None,
     ) -> CaptureResult:
-        resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
         """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
 
-        Streams ``cycle`` events from the firmware and stops on the terminating
-        ``done`` event (reached when the CPU halts via STP or ``max_cycles`` is
-        reached).
+        Holds reset, arms ``read``, then releases reset so capture starts from
+        the reset vector (typically ``$8000``). Polls ``read_event`` for cycle
+        and done frames.
 
         Side effects:
-            Disables the ASCII monitor and flushes serial input before
-            starting the capture.
+            Disables the ASCII monitor, asserts then releases CPU reset, and
+            may change PHI2 via ``phi2_hz`` on the read command.
 
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
                 firmware stops. Defaults to ``10000``.
-           frame_timeout: Per-frame read timeout in seconds while waiting for
-                cycle/done events. Defaults to :attr:`self.timeout`.
+            frame_timeout: Overall capture timeout in seconds while polling
+                for cycle/done events. Defaults to :attr:`timeout`.
+            on_cycle: Optional callback invoked for each captured cycle (e.g.
+                for live CLI output).
 
         Returns:
             A :class:`CaptureResult` with the stop reason and captured cycles.
@@ -496,11 +505,15 @@ class HardwareAPI:
         Raises:
             HardwareAPIError: If the read is rejected or an unexpected frame
                 arrives.
-            TimeoutError: If the Pico stops sending frames before ``done``.
+            TimeoutError: If the capture does not complete in time.
         """
-        self._log(f"CALL read_until_stp(max_cycles={max_cycles})")
+        resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
+        self._emit({"type": "call", "method": "read_until_stp", "max_cycles": max_cycles})
         self.monitor(enable=False)
         self._drain_input()
+
+        # Restart CPU from reset vector once capture is armed.
+        self.reset(assert_reset=True)
 
         ack = self._exchange_json(
             build_request(
@@ -508,32 +521,57 @@ class HardwareAPI:
                 req_id=self._next_id(),
                 until="stp",
                 max_cycles=max_cycles,
+                phi2_hz=CAPTURE_PHI2_HZ,
             )
         )
         if not ack.get("ok"):
             raise HardwareAPIError(f"read rejected: {ack}")
 
+        time.sleep(0.03)
+        self.reset(assert_reset=False)
+
+        self._emit({"type": "waiting", "for": "read_event", "timeout_s": resolved_timeout})
+
         cycles: list[CycleEvent] = []
         result = ReadResult(ok=False, reason="unknown")
+        deadline = time.time() + resolved_timeout
+        poll_idle_s = 0.005
 
-        while True:
-            msg = self._recv_json_frame(timeout=resolved_timeout)
-            if msg.get("type") == "event" and msg.get("event") == "cycle":
-                cycles.append(parse_cycle_event(msg))
-            elif msg.get("type") == "event" and msg.get("event") == "done":
-                done = parse_done_event(msg)
-                result = ReadResult(
-                    ok=done.ok,
-                    reason=done.reason,
-                    cycles=cycles,
-                    stopped_addr=done.addr,
+        try:
+            while time.time() < deadline:
+                msg = self._exchange_json(
+                    build_request("read_event", req_id=self._next_id())
                 )
-                break
+                event = msg.get("event")
+                if msg.get("type") == "event" and event == "cycle":
+                    cycle = parse_cycle_event(msg)
+                    if on_cycle is not None:
+                        on_cycle(cycle)
+                    cycles.append(cycle)
+                    deadline = time.time() + resolved_timeout
+                elif msg.get("type") == "event" and event == "done":
+                    done = parse_done_event(msg)
+                    result = ReadResult(
+                        ok=done.ok,
+                        reason=done.reason,
+                        cycles=cycles,
+                        stopped_addr=done.addr,
+                    )
+                    break
+                elif event == "none":
+                    time.sleep(poll_idle_s)
+                else:
+                    raise HardwareAPIError(f"unexpected frame during read: {msg}")
             else:
-                raise HardwareAPIError(f"unexpected frame during read: {msg}")
+                raise TimeoutError(
+                    f"timed out after read ack (got {len(cycles)} cycles). "
+                    "No STP/done yet — is PHI2 running? Try --timeout 60."
+                )
+        except TimeoutError:
+            raise
 
         capture = CaptureResult.from_read_result(result)
-        self._log(f"RET read_until_stp -> {capture}")
+        self._emit({"type": "ret", "method": "read_until_stp", "result": asdict(capture)})
         return capture
 
 

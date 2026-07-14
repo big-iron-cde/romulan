@@ -14,9 +14,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROTO_VERSION = 1
-PROTO_JSON_MAX = 2048
+# Must match piclone PROTO_JSON_MAX (48 KiB) — fits one full-ROM base64 chunk.
+PROTO_JSON_MAX = 48 * 1024
 ROM_SIZE = 0x8000
-CHUNK_RAW_MAX = 1476
+# Must match piclone UPLOAD_CHUNK_RAW_MAX — one chunk can carry the whole ROM.
+CHUNK_RAW_MAX = ROM_SIZE
 
 
 class ProtocolV1Error(Exception):
@@ -49,7 +51,7 @@ class CycleEvent:
         seq: Monotonic sequence number assigned by the firmware.
         addr: Address on the bus, as a hex string.
         data: Data byte on the bus, as a hex string.
-        rw: Read/write flag (1 = read, 0 = write).
+        rw: Read/write flag (0 = read, 1 = write).
     """
 
     seq: int

@@ -12,7 +12,7 @@ uv run romulan [input] [--build] [--upload] [-o OUTPUT] [--port PORT]
 |-----------------|-------------|---------|
 | `input` | Annotated hex dump file (required with `--build`) | — |
 | `--build` | Build a `.bin` ROM image from the input file | — |
-| `--upload` | Upload the ROM via the plain-text `loadbin` protocol | — |
+| `--upload` | Upload the ROM via the framed Hardware API | — |
 | `-o`, `--output` | Output ROM binary path | `bin/rom.bin` |
 | `--port` | Serial port (auto-detected if omitted) | auto-detect |
 
@@ -65,14 +65,15 @@ uv run romulan hardware request-addr
 
 ## Verbose output
 
-When `--verbose` is set on a hardware command, each protocol exchange is logged to stderr:
+When `--verbose` is set on a hardware command, each protocol exchange is logged to stderr as NDJSON:
 
 ```
-[HW] Opened /dev/ttyACM0 @ 115200
-[HW] CALL request_addr()
-[HW] SEND: {"v":1,"cmd":"request_addr","id":"abc123"}
-[HW] RECV: {"v":1,"ok":true,"addr":"8000"}
-[HW] RET request_addr -> 32768
+{"type":"call","method":"request_addr"}
+{"type":"send","payload":{"v":1,"cmd":"request_addr","id":"abc123"}}
+{"type":"ack"}
+{"type":"ack"}
+{"type":"recv","payload":{"v":1,"ok":true,"addr":"8000"}}
+{"type":"ret","method":"request_addr","result":32768}
 ```
 
 See [Hardware API](hardware-api.md) for protocol details.

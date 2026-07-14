@@ -141,4 +141,5 @@ def test_parse_upload_commit():
 
 
 def test_chunk_raw_max():
-    assert CHUNK_RAW_MAX == 1476
+    assert CHUNK_RAW_MAX == ROM_SIZE
+    assert CHUNK_RAW_MAX == 0x8000

@@ -105,14 +105,25 @@ class TestCli:
 
     def test_build_upload(self, sample_hex_file: Path, tmp_path: Path) -> None:
         out = tmp_path / "rom.bin"
-        with patch("romulan.main.upload") as mock_upload:
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.upload_rom.return_value = {
+            "ok": True,
+            "bytes": ROM_SIZE,
+            "reset_vector": "8000",
+            "expected": ROM_SIZE,
+        }
+        with patch("romulan.main.HardwareAPI", return_value=mock_api) as mock_hw:
             with patch("romulan.main.find_pico_port", return_value="/dev/ttyFAKE"):
                 with patch.object(
                     sys, "argv", ["romulan", str(sample_hex_file), "--build", "--upload", "-o", str(out)]
                 ):
                     main()
         assert out.exists()
-        mock_upload.assert_called_once_with("/dev/ttyFAKE", out)
+        mock_hw.assert_called_once_with("/dev/ttyFAKE")
+        mock_api.upload_rom.assert_called_once()
+        assert len(mock_api.upload_rom.call_args[0][0]) == ROM_SIZE
 
     def test_build_with_custom_output(self, sample_hex_file: Path, tmp_path: Path) -> None:
         out = tmp_path / "custom" / "rom.bin"
@@ -126,11 +137,21 @@ class TestCli:
         out = tmp_path / "custom" / "rom.bin"
         out.parent.mkdir(parents=True, exist_ok=True)
         build_rom(sample_hex_file, out)
-        with patch("romulan.main.upload") as mock_upload:
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.upload_rom.return_value = {
+            "ok": True,
+            "bytes": ROM_SIZE,
+            "reset_vector": "8000",
+            "expected": ROM_SIZE,
+        }
+        with patch("romulan.main.HardwareAPI", return_value=mock_api) as mock_hw:
             with patch("romulan.main.find_pico_port", return_value="/dev/ttyFAKE"):
                 with patch.object(sys, "argv", ["romulan", "--upload", "-o", str(out)]):
                     main()
-        mock_upload.assert_called_once_with("/dev/ttyFAKE", out)
+        mock_hw.assert_called_once_with("/dev/ttyFAKE")
+        mock_api.upload_rom.assert_called_once_with(out.read_bytes())
 
     def test_neither_flag(self) -> None:
         with patch.object(sys, "argv", ["romulan", "input.txt"]):
@@ -177,7 +198,7 @@ class TestFindPicoPort:
 
 
 class TestHardwareVerbose:
-    @patch("romulan.hardware_api.HardwareAPI")
+    @patch("romulan.main.HardwareAPI")
     def test_verbose_flag_passed_to_api(self, mock_hw_cls: MagicMock) -> None:
         """The --verbose flag is forwarded to HardwareAPI."""
         mock_api = MagicMock()
@@ -195,7 +216,7 @@ class TestHardwareVerbose:
 
         mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=30.0, verbose=True)
 
-    @patch("romulan.hardware_api.HardwareAPI")
+    @patch("romulan.main.HardwareAPI")
     def test_verbose_false_by_default(self, mock_hw_cls: MagicMock) -> None:
         """Without --verbose, HardwareAPI receives verbose=False."""
         mock_api = MagicMock()
@@ -213,7 +234,7 @@ class TestHardwareVerbose:
 
         mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=30.0, verbose=False)
 
-    @patch("romulan.hardware_api.HardwareAPI")
+    @patch("romulan.main.HardwareAPI")
     def test_timeout_flag_passed_to_api(self, mock_hw_cls: MagicMock) -> None:
         """The --timeout flag is forwarded to HardwareAPI."""
         mock_api = MagicMock()
