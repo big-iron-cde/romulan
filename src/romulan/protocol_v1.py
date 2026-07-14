@@ -110,6 +110,10 @@ class StatusResponse:
         read_active: Whether a bus-capture read is currently running.
         monitor_enabled: Whether the ASCII monitor output is enabled.
         upload_active: Whether a ROM upload is in progress.
+        resb: Raw RESB (reset) input level (0 = low/asserted, 1 = high/released).
+        rwb: Raw RWB input level (0 = write, 1 = read).
+        a15: Raw A15 input level (0 = RAM space, 1 = ROM space).
+        phi2: Raw PHI2 clock input level (0 = low, 1 = high).
     """
 
     phi2_hz: float
@@ -121,6 +125,10 @@ class StatusResponse:
     upload_active: bool = False
     last_data: str = "00"
     last_rw: int = 0
+    resb: int = 0
+    rwb: int = 0
+    a15: int = 0
+    phi2: int = 0
 
 
 @dataclass
@@ -371,6 +379,10 @@ def parse_status(msg: dict[str, Any]) -> StatusResponse:
         read_active=bool(msg.get("read_active")),
         monitor_enabled=bool(msg.get("monitor_enabled")),
         upload_active=bool(msg.get("upload_active")),
+        resb=int(msg.get("resb", 0)),
+        rwb=int(msg.get("rwb", 0)),
+        a15=int(msg.get("a15", 0)),
+        phi2=int(msg.get("phi2", 0)),
     )
 
 

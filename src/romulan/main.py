@@ -388,6 +388,11 @@ def _handle_hardware(args: argparse.Namespace) -> None:
                 print(f"Last addr: 0x{st.last_addr}")
                 print(f"Last data: 0x{st.last_data}")
                 print(f"Last rw: {st.last_rw} ({'read' if st.last_rw == 0 else 'write'})")
+                print("Raw pin levels:")
+                print(f"  RESB: {st.resb} ({'released' if st.resb else 'asserted'})")
+                print(f"  RWB:  {st.rwb} ({'read' if st.rwb else 'write'})")
+                print(f"  A15:  {st.a15} ({'ROM space' if st.a15 else 'RAM space'})")
+                print(f"  PHI2: {st.phi2} ({'high' if st.phi2 else 'low'})")
 
     except (HardwareAPIError, TimeoutError) as exc:
         print(f"ERROR: Hardware API failed: {exc}", file=sys.stderr)

@@ -321,6 +321,10 @@ class TestHardwareVerbose:
             last_addr="F000",
             last_data="4C",
             last_rw=0,
+            resb=1,
+            rwb=0,
+            a15=1,
+            phi2=0,
         )
         mock_hw_cls.return_value = mock_api
 

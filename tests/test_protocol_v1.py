@@ -108,12 +108,20 @@ def test_parse_status():
         "read_active": False,
         "monitor_enabled": False,
         "upload_active": False,
+        "resb": 1,
+        "rwb": 0,
+        "a15": 1,
+        "phi2": 0,
     }
     st = parse_status(msg)
     assert st.last_addr == "4000"
     assert st.last_data == "18"
     assert st.last_rw == 0
     assert st.phi2_hz == 0.2
+    assert st.resb == 1
+    assert st.rwb == 0
+    assert st.a15 == 1
+    assert st.phi2 == 0
 
 
 def test_parse_peek_response():
