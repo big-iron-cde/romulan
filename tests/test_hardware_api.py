@@ -153,7 +153,7 @@ class TestSetClock:
         _enqueue_transaction_acks(mock_serial)
         _enqueue_response(
             mock_serial,
-            b'{"v":1,"ok":true,"cmd":"clock","phi2_hz":100.0}',
+            b'{"v":1,"ok":true,"cmd":"clock","hz":100.0}',
         )
 
         api = _make_api(mock_serial)
@@ -163,7 +163,7 @@ class TestSetClock:
         msg = json.loads(payload)
         assert msg["v"] == 1
         assert msg["cmd"] == "clock"
-        assert msg["phi2_hz"] == 100.0
+        assert msg["hz"] == 100.0
 
     def test_set_clock_out_of_range(self, mock_serial):
         api = _make_api(mock_serial)

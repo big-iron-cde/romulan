@@ -425,7 +425,7 @@ class HardwareAPI:
             build_request(
                 "clock",
                 req_id=self._next_id(),
-                phi2_hz=hz,
+                hz=hz,
             )
         )
         self._emit({"type": "return", "method": "set_clock"})
