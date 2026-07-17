@@ -29,15 +29,20 @@ import serial
 
 from .protocol_v1 import (
     CHUNK_RAW_MAX,
+    READ_EVENT_BATCH_SIZE,
     ROM_SIZE,
     CycleEvent,
+    DriveResponse,
+    PeekResponse,
     ProtocolV1Error,
     ReadResult,
     StatusResponse,
     build_request,
-    parse_cycle_event,
+    parse_cycles_event,
     parse_done_event,
+    parse_drive_response,
     parse_frame,
+    parse_peek_response,
     parse_status,
     parse_upload_response,
 )
@@ -48,9 +53,6 @@ STX = 0x02
 ACK = 0x06
 EOT = 0x04
 NACK = 0x15
-
-# PHI2 rate requested when arming bus capture (must match piclone default on make-it-faster).
-CAPTURE_PHI2_HZ = 1000.0
 
 
 class HardwareAPIError(Exception):
@@ -357,7 +359,7 @@ class HardwareAPI:
 
         Returns:
             A :class:`~romulan.protocol_v1.StatusResponse` describing the
-            clock frequency, ROM/reset/monitor state, and last bus address.
+            clock frequency, ROM/reset/monitor state, and last bus sample.
 
         Raises:
             HardwareAPIError: If the firmware reports an error.
@@ -365,6 +367,109 @@ class HardwareAPI:
         """
         resp = self._exchange_json(build_request("status", req_id=self._next_id()))
         return parse_status(resp)
+
+    def peek(self, offset: int, count: int = 16) -> PeekResponse:
+        """Read back bytes from the loaded ``rom_image[]``.
+
+        This is useful for verifying that an upload landed at the expected
+        offsets before releasing RESET.
+
+        Args:
+            offset: Byte offset within the 32 KB ROM image.
+            count: Number of bytes to read (1-64; firmware caps at 64).
+
+        Returns:
+            A :class:`~romulan.protocol_v1.PeekResponse` with the offset,
+            count, and returned bytes.
+
+        Raises:
+            ValueError: If ``offset`` or ``count`` is out of range.
+            HardwareAPIError: If the firmware reports an error or returns
+                malformed data.
+            TimeoutError: If the Pico does not respond in time.
+        """
+        self._emit({"type": "call", "method": "peek", "offset": offset, "count": count})
+        if not 0 <= offset < ROM_SIZE:
+            raise ValueError(f"offset must be within [0, {ROM_SIZE})")
+        if count <= 0 or count > 64:
+            raise ValueError("count must be 1..64")
+
+        resp = self._exchange_json(
+            build_request(
+                "peek",
+                req_id=self._next_id(),
+                offset=offset,
+                count=count,
+            )
+        )
+        result = parse_peek_response(resp)
+        self._emit({"type": "return", "method": "peek", "data": result.data.hex()})
+        return result
+
+    def set_clock(self, hz: float) -> None:
+        """Set the 65C02 PHI2 clock frequency.
+
+        Args:
+            hz: Target frequency in hertz. The firmware accepts 0.1..1000 Hz.
+
+        Raises:
+            ValueError: If ``hz`` is outside the supported range.
+            HardwareAPIError: If the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
+        self._emit({"type": "call", "method": "set_clock", "hz": hz})
+        if not 0.1 <= hz <= 1000.0:
+            raise ValueError("hz must be between 0.1 and 1000.0")
+
+        self._exchange_json(
+            build_request(
+                "clock",
+                req_id=self._next_id(),
+                hz=hz,
+            )
+        )
+        self._emit({"type": "return", "method": "set_clock"})
+
+    def drive(self, value: int | str | None = None) -> DriveResponse:
+        """Force the Pico to drive D0-D7 with a byte, or release the bus.
+
+        This is a diagnostic command. The CPU should be in reset or removed
+        before forcing the data bus, otherwise the Pico and CPU contend.
+
+        Args:
+            value: Byte to drive on D0-D7. Pass ``None`` (or omit) to release
+                the bus and return to normal ROM emulation.
+
+        Returns:
+            A :class:`~romulan.protocol_v1.DriveResponse` with the new state.
+
+        Raises:
+            ValueError: If ``value`` is outside 0..255.
+            HardwareAPIError: If the firmware reports an error.
+            TimeoutError: If the Pico does not respond in time.
+        """
+        if value is None:
+            self._emit({"type": "call", "method": "drive", "enable": False})
+            resp = self._exchange_json(
+                build_request("drive", req_id=self._next_id(), enable=False)
+            )
+        else:
+            if isinstance(value, str):
+                value = int(value, 16)
+            if not 0 <= value <= 0xFF:
+                raise ValueError("value must be a byte (0..255)")
+            hex_value = f"{value:02X}"
+            self._emit({"type": "call", "method": "drive", "value": hex_value})
+            resp = self._exchange_json(
+                build_request(
+                    "drive",
+                    req_id=self._next_id(),
+                    value=hex_value,
+                )
+            )
+        result = parse_drive_response(resp)
+        self._emit({"type": "return", "method": "drive", "enabled": result.enabled, "value": result.value})
+        return result
 
     def upload_rom(self, data: bytes) -> dict[str, Any]:
         """Upload a full 32 KB ROM image to the Pico in a begin/chunk/commit sequence.
@@ -440,16 +545,18 @@ class HardwareAPI:
         max_cycles: int = 10000,
         frame_timeout: float | None = None,
         on_cycle: Callable[[CycleEvent], None] | None = None,
+        batch_size: int = READ_EVENT_BATCH_SIZE,
+        phi2_hz: float | None = None,
     ) -> CaptureResult:
         """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
 
         Holds reset, arms ``read``, then releases reset so capture starts from
-        the reset vector (typically ``$8000``). Polls ``read_event`` for cycle
-        and done frames.
+        the reset vector (typically ``$8000``). Polls ``read_event`` for batched
+        cycle and done frames.
 
         Side effects:
-            Disables the ASCII monitor, asserts then releases CPU reset, and
-            may change PHI2 via ``phi2_hz`` on the read command.
+            Disables the ASCII monitor, asserts then releases CPU reset. The
+            current PHI2 clock is preserved unless ``phi2_hz`` is provided.
 
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
@@ -458,6 +565,10 @@ class HardwareAPI:
                 for cycle/done events. Defaults to :attr:`timeout`.
             on_cycle: Optional callback invoked for each captured cycle (e.g.
                 for live CLI output).
+            batch_size: Number of cycles to request per ``read_event`` poll.
+                Defaults to :data:`READ_EVENT_BATCH_SIZE`.
+            phi2_hz: Optional clock frequency to set when arming capture.
+                If omitted, the current clock speed is preserved.
 
         Returns:
             A :class:`CaptureResult` with the stop reason and captured cycles.
@@ -468,21 +579,26 @@ class HardwareAPI:
             TimeoutError: If the capture does not complete in time.
         """
         resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
-        self._emit({"type": "call", "method": "read_until_stp", "max_cycles": max_cycles})
+        emit_payload: dict[str, Any] = {"max_cycles": max_cycles, "batch_size": batch_size}
+        if phi2_hz is not None:
+            emit_payload["phi2_hz"] = phi2_hz
+        self._emit({"type": "call", "method": "read_until_stp", **emit_payload})
         self.monitor(enable=False)
         self._drain_input()
 
         # Restart CPU from reset vector once capture is armed.
         self.reset(assert_reset=True)
 
+        read_fields: dict[str, Any] = {
+            "until": "stp",
+            "max_cycles": max_cycles,
+            "batch_size": batch_size,
+        }
+        if phi2_hz is not None:
+            read_fields["phi2_hz"] = phi2_hz
+
         ack = self._exchange_json(
-            build_request(
-                "read",
-                req_id=self._next_id(),
-                until="stp",
-                max_cycles=max_cycles,
-                phi2_hz=CAPTURE_PHI2_HZ,
-            )
+            build_request("read", req_id=self._next_id(), **read_fields)
         )
         if not ack.get("ok"):
             raise HardwareAPIError(f"read rejected: {ack}")
@@ -500,14 +616,19 @@ class HardwareAPI:
         try:
             while time.time() < deadline:
                 msg = self._exchange_json(
-                    build_request("read_event", req_id=self._next_id())
+                    build_request(
+                        "read_event",
+                        req_id=self._next_id(),
+                        batch_size=batch_size,
+                    )
                 )
                 event = msg.get("event")
-                if msg.get("type") == "event" and event == "cycle":
-                    cycle = parse_cycle_event(msg)
-                    if on_cycle is not None:
-                        on_cycle(cycle)
-                    cycles.append(cycle)
+                if msg.get("type") == "event" and event == "cycles":
+                    batch = parse_cycles_event(msg)
+                    for cycle in batch:
+                        if on_cycle is not None:
+                            on_cycle(cycle)
+                    cycles.extend(batch)
                     deadline = time.time() + resolved_timeout
                 elif msg.get("type") == "event" and event == "done":
                     done = parse_done_event(msg)

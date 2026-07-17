@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from romulan.hardware_api import CaptureResult, HardwareAPI, HardwareAPIError
-from romulan.protocol_v1 import CHUNK_RAW_MAX, ROM_SIZE, build_request
+from romulan.protocol_v1 import CHUNK_RAW_MAX, ROM_SIZE, build_request, parse_drive_response, parse_peek_response
 
 ENQ = b"\x05"
 STX = b"\x02"
@@ -74,16 +74,20 @@ def _enqueue_exchange(mock_serial, response_payload: bytes):
     _enqueue_response(mock_serial, response_payload)
 
 
-def _enqueue_capture_arm(mock_serial, *, max_cycles: int = 500):
+def _enqueue_capture_arm(
+    mock_serial, *, max_cycles: int = 500, batch_size: int = 32, phi2_hz: float | None = None
+):
     """Queue monitor + reset assert + read + reset release exchanges."""
     _enqueue_exchange(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
     _enqueue_exchange(mock_serial, b'{"v":1,"ok":true,"cmd":"reset","asserted":true}')
-    _enqueue_exchange(
-        mock_serial,
-        (
-            f'{{"v":1,"ok":true,"cmd":"read","until":"stp","max_cycles":{max_cycles}}}'
-        ).encode(),
+    read_payload = (
+        f'{{"v":1,"ok":true,"cmd":"read","until":"stp",'
+        f'"max_cycles":{max_cycles},"batch_size":{batch_size}'
     )
+    if phi2_hz is not None:
+        read_payload += f',"phi2_hz":{phi2_hz}'
+    read_payload += "}"
+    _enqueue_exchange(mock_serial, read_payload.encode())
     _enqueue_exchange(mock_serial, b'{"v":1,"ok":true,"cmd":"reset","asserted":false}')
 
 
@@ -115,6 +119,109 @@ class TestReset:
         assert msg["v"] == 1
         assert msg["cmd"] == "reset"
         assert msg["assert"] is True
+
+
+class TestPeek:
+    def test_peek_success(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"peek","offset":28672,"count":3,"data":"A9AA05"}',
+        )
+
+        api = _make_api(mock_serial)
+        result = api.peek(offset=0x7000, count=3)
+        assert result.offset == 0x7000
+        assert result.count == 3
+        assert result.data == b"\xA9\xAA\x05"
+
+    def test_peek_offset_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="offset must be"):
+            api.peek(offset=ROM_SIZE, count=1)
+
+    def test_peek_count_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="count must be"):
+            api.peek(offset=0, count=0)
+        with pytest.raises(ValueError, match="count must be"):
+            api.peek(offset=0, count=65)
+
+
+class TestSetClock:
+    def test_set_clock_success(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"clock","hz":100.0}',
+        )
+
+        api = _make_api(mock_serial)
+        api.set_clock(hz=100.0)
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["v"] == 1
+        assert msg["cmd"] == "clock"
+        assert msg["hz"] == 100.0
+
+    def test_set_clock_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="hz must be"):
+            api.set_clock(hz=0.05)
+        with pytest.raises(ValueError, match="hz must be"):
+            api.set_clock(hz=2000.0)
+
+
+class TestDrive:
+    def test_drive_enable_with_int(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"drive","enabled":true,"value":"A5"}')
+
+        api = _make_api(mock_serial)
+        result = api.drive(0xA5)
+        assert result.enabled is True
+        assert result.value == "A5"
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["v"] == 1
+        assert msg["cmd"] == "drive"
+        assert msg["value"] == "A5"
+
+    def test_drive_enable_with_hex_string(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"drive","enabled":true,"value":"FF"}')
+
+        api = _make_api(mock_serial)
+        result = api.drive("FF")
+        assert result.enabled is True
+        assert result.value == "FF"
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["value"] == "FF"
+
+    def test_drive_disable(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"drive","enabled":false,"value":"00"}')
+
+        api = _make_api(mock_serial)
+        result = api.drive(None)
+        assert result.enabled is False
+        assert result.value == "00"
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["cmd"] == "drive"
+        assert msg["enable"] is False
+
+    def test_drive_value_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="must be a byte"):
+            api.drive(256)
+        with pytest.raises(ValueError, match="must be a byte"):
+            api.drive(-1)
 
 
 class TestUploadRom:
@@ -170,7 +277,7 @@ class TestReadUntilStp:
         _enqueue_capture_arm(mock_serial, max_cycles=500)
         _enqueue_exchange(
             mock_serial,
-            b'{"v":1,"ok":true,"type":"event","event":"cycle","seq":1,"addr":"8000","data":"18","rw":0}',
+            b'{"v":1,"ok":true,"type":"event","event":"cycles","cycles":[{"seq":1,"addr":"8000","data":"18","rw":0}]}',
         )
         _enqueue_exchange(
             mock_serial,
@@ -200,7 +307,7 @@ class TestReadUntilStp:
         _enqueue_capture_arm(mock_serial, max_cycles=10)
         _enqueue_exchange(
             mock_serial,
-            b'{"v":1,"ok":true,"type":"event","event":"cycle","seq":1,"addr":"8000","data":"18","rw":0}',
+            b'{"v":1,"ok":true,"type":"event","event":"cycles","cycles":[{"seq":1,"addr":"8000","data":"18","rw":0}]}',
         )
         _enqueue_exchange(
             mock_serial,
@@ -212,6 +319,66 @@ class TestReadUntilStp:
         api.read_until_stp(max_cycles=10, on_cycle=seen.append)
         assert len(seen) == 1
         assert seen[0].addr == "8000"
+
+    def test_batch_size_defaults_to_read_event_batch_size(self, mock_serial):
+        """read_event requests use the configured batch_size."""
+        from romulan.protocol_v1 import READ_EVENT_BATCH_SIZE
+
+        _enqueue_capture_arm(mock_serial, max_cycles=10, batch_size=READ_EVENT_BATCH_SIZE)
+        _enqueue_exchange(
+            mock_serial,
+            b'{"v":1,"ok":true,"type":"event","event":"done","reason":"stp","cycles":0,"addr":"8000"}',
+        )
+
+        api = _make_api(mock_serial)
+        api.read_until_stp(max_cycles=10)
+
+        # Find the read_event request payload and verify batch_size.
+        for call in mock_serial.write.call_args_list:
+            payload = call[0][0]
+            if b'"cmd":"read_event"' in payload:
+                assert f'"batch_size":{READ_EVENT_BATCH_SIZE}'.encode() in payload
+                break
+        else:
+            pytest.fail("never sent read_event request")
+
+    def test_preserves_clock_speed_by_default(self, mock_serial):
+        """read command does not include phi2_hz unless explicitly provided."""
+        _enqueue_capture_arm(mock_serial, max_cycles=10)
+        _enqueue_exchange(
+            mock_serial,
+            b'{"v":1,"ok":true,"type":"event","event":"done","reason":"stp","cycles":0,"addr":"8000"}',
+        )
+
+        api = _make_api(mock_serial)
+        api.read_until_stp(max_cycles=10)
+
+        for call in mock_serial.write.call_args_list:
+            payload = call[0][0]
+            if b'"cmd":"read"' in payload:
+                assert b'"phi2_hz"' not in payload
+                break
+        else:
+            pytest.fail("never sent read request")
+
+    def test_explicit_phi2_hz_sent_when_provided(self, mock_serial):
+        """read command includes phi2_hz when the caller passes it."""
+        _enqueue_capture_arm(mock_serial, max_cycles=10, phi2_hz=250.0)
+        _enqueue_exchange(
+            mock_serial,
+            b'{"v":1,"ok":true,"type":"event","event":"done","reason":"stp","cycles":0,"addr":"8000"}',
+        )
+
+        api = _make_api(mock_serial)
+        api.read_until_stp(max_cycles=10, phi2_hz=250.0)
+
+        for call in mock_serial.write.call_args_list:
+            payload = call[0][0]
+            if b'"cmd":"read"' in payload:
+                assert b'"phi2_hz":250.0' in payload
+                break
+        else:
+            pytest.fail("never sent read request")
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +512,8 @@ class TestVerboseLogging:
 
     def test_read_until_stp_verbose(self, mock_serial, capsys):
         """verbose=True emits JSON events for read_until_stp."""
+        from romulan.protocol_v1 import READ_EVENT_BATCH_SIZE
+
         _enqueue_capture_arm(mock_serial, max_cycles=500)
         _enqueue_exchange(
             mock_serial,
@@ -356,7 +525,12 @@ class TestVerboseLogging:
 
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
-        assert events[0] == {"type": "call", "method": "read_until_stp", "max_cycles": 500}
+        assert events[0] == {
+            "type": "call",
+            "method": "read_until_stp",
+            "max_cycles": 500,
+            "batch_size": READ_EVENT_BATCH_SIZE,
+        }
         assert any(e["type"] == "ret" and e["method"] == "read_until_stp" for e in events)
 
     def test_verbose_false_silent(self, mock_serial, capsys):

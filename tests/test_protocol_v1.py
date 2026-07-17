@@ -15,8 +15,11 @@ from romulan.protocol_v1 import (
     build_request,
     parse_command_response,
     parse_cycle_event,
+    parse_cycles_event,
     parse_done_event,
+    parse_drive_response,
     parse_frame,
+    parse_peek_response,
     parse_status,
     parse_upload_response,
 )
@@ -75,6 +78,22 @@ def test_parse_done_event():
     assert done.cycles == 3
 
 
+def test_parse_cycles_event():
+    msg = {
+        "v": 1,
+        "type": "event",
+        "event": "cycles",
+        "cycles": [
+            {"seq": 1, "addr": "8000", "data": "18", "rw": 0},
+            {"seq": 2, "addr": "8001", "data": "A9", "rw": 0},
+        ],
+    }
+    cycles = parse_cycles_event(msg)
+    assert len(cycles) == 2
+    assert cycles[0].addr == "8000"
+    assert cycles[1].data == "A9"
+
+
 def test_parse_status():
     msg = {
         "v": 1,
@@ -84,13 +103,53 @@ def test_parse_status():
         "rom_active": True,
         "reset_asserted": False,
         "last_addr": "4000",
+        "last_data": "18",
+        "last_rw": 0,
         "read_active": False,
         "monitor_enabled": False,
         "upload_active": False,
+        "resb": 1,
+        "rwb": 0,
+        "a15": 1,
+        "phi2": 0,
     }
     st = parse_status(msg)
     assert st.last_addr == "4000"
+    assert st.last_data == "18"
+    assert st.last_rw == 0
     assert st.phi2_hz == 0.2
+    assert st.resb == 1
+    assert st.rwb == 0
+    assert st.a15 == 1
+    assert st.phi2 == 0
+
+
+def test_parse_peek_response():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "peek",
+        "offset": 28672,
+        "count": 3,
+        "data": "A9AA05",
+    }
+    peek = parse_peek_response(msg)
+    assert peek.offset == 28672
+    assert peek.count == 3
+    assert peek.data == b"\xA9\xAA\x05"
+
+
+def test_parse_peek_response_rejects_invalid_hex():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "peek",
+        "offset": 0,
+        "count": 1,
+        "data": "ZZ",
+    }
+    with pytest.raises(ProtocolV1Error, match="invalid hex"):
+        parse_peek_response(msg)
 
 
 def test_parse_upload_commit():
@@ -105,6 +164,32 @@ def test_parse_upload_commit():
     up = parse_upload_response(msg)
     assert up.reset_vector == "8000"
     assert up.received == ROM_SIZE
+
+
+def test_parse_drive_response_enabled():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "drive",
+        "enabled": True,
+        "value": "A5",
+    }
+    dr = parse_drive_response(msg)
+    assert dr.enabled is True
+    assert dr.value == "A5"
+
+
+def test_parse_drive_response_disabled():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "drive",
+        "enabled": False,
+        "value": "00",
+    }
+    dr = parse_drive_response(msg)
+    assert dr.enabled is False
+    assert dr.value == "00"
 
 
 def test_chunk_raw_max():
