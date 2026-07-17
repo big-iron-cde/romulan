@@ -27,9 +27,9 @@ jobs:
         mkdir -p bin
         uv run romulan demo.txt --build -o bin/rom.bin
 
-    - name: hardware reset --assert
-      continue-on-error: true
-      run: uv run romulan hardware reset --assert --verbose
+ #   - name: hardware reset --assert
+ #     continue-on-error: true
+ #     run: uv run romulan hardware reset --assert --verbose
 
     - name: hardware upload
       continue-on-error: true
