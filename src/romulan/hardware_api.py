@@ -5,7 +5,7 @@ framed JSON protocol implemented by the Pico firmware. It handles the
 low-level ENQ/STX/ACK/EOT framing, encodes commands built by
 :mod:`romulan.protocol_v1`, and exposes friendly methods for the common
 operations: querying the current CPU address, asserting/releasing reset,
-toggling the ASCII monitor, reading status, uploading a ROM image, and
+toggling the JSON monitor, reading status, uploading a ROM image, and
 capturing bus cycles.
 
 Opening a :class:`HardwareAPI` immediately opens the underlying serial port.
@@ -27,6 +27,7 @@ from typing import Any, Callable
 
 import serial
 
+from .output import emit_error, emit_event
 from .protocol_v1 import (
     CHUNK_RAW_MAX,
     READ_EVENT_BATCH_SIZE,
@@ -181,9 +182,24 @@ class HardwareAPI:
         return self._ser
 
     def _emit(self, event: dict[str, Any]) -> None:
-        """Write a trace message to stderr when ``verbose`` is enabled."""
-        if self.verbose:
-            print(json.dumps(event, separators=(",", ":"), ensure_ascii=False), file=sys.stderr, flush=True)
+        """Write a trace message to stderr when ``verbose`` is enabled.
+
+        Events are wrapped in the v1 output schema envelope (see
+        :mod:`romulan.output`): ``{"v":1,"type":"event","event":<name>,...}``,
+        or the ``error`` envelope for ``{"type":"error",...}`` events.
+        """
+        if not self.verbose:
+            return
+        event = dict(event)
+        kind = str(event.pop("type", "event"))
+        if kind == "error":
+            emit_error(
+                str(event.get("error", "error")),
+                str(event.get("detail", "")),
+                stream=sys.stderr,
+            )
+        else:
+            emit_event(kind, event, stream=sys.stderr)
 
     def _payload_event(self, direction: str, payload: bytes) -> dict[str, Any]:
         event: dict[str, Any] = {"type": direction}
@@ -212,6 +228,36 @@ class HardwareAPI:
     def _write_byte(self, value: int) -> None:
         self.ser.write(bytes([value]))
 
+    def _extract_json_payload(self, raw: bytes) -> bytes:
+        """Drop stray bytes that precede the JSON payload in a frame window.
+
+        Firmware responses are compact single-line JSON, while the
+        unstructured output the firmware may emit between frames (legacy
+        ASCII monitor rows, JSON monitor lines on current firmware) is
+        newline-terminated. The payload is therefore the text after the last
+        newline, taken from the first ``{`` (which also covers garbage
+        fragments that lack a newline). Garbage landing *inside* the payload
+        still fails parsing as before.
+
+        Args:
+            raw: All bytes received between STX-ACK and EOT.
+
+        Returns:
+            The bytes to hand to the JSON parser (empty when nothing
+            payload-like was found).
+        """
+        start = raw.rfind(b"\n") + 1
+        brace = raw.find(b"{", start)
+        if brace == -1:
+            payload = b""
+            skipped = len(raw)
+        else:
+            payload = raw[brace:]
+            skipped = brace
+        if skipped:
+            self._emit({"type": "resync", "skipped_bytes": skipped})
+        return payload
+
     def _read_frame_payload(self, timeout: float | None = None) -> bytes:
         wait = self.timeout if timeout is None else timeout
         if self._sync_to_byte({STX}, timeout=wait) != STX:
@@ -219,7 +265,7 @@ class HardwareAPI:
 
         self._write_byte(ACK)
 
-        buf = bytearray()
+        raw = bytearray()
         deadline = time.time() + wait
         while time.time() < deadline:
             chunk = self.ser.read(256)
@@ -228,8 +274,8 @@ class HardwareAPI:
             for byte in chunk:
                 if byte == EOT:
                     self._write_byte(ACK)
-                    return bytes(buf)
-                buf.append(byte)
+                    return self._extract_json_payload(bytes(raw))
+                raw.append(byte)
         self._emit({"type": "error", "error": "timeout", "detail": "timed out waiting for EOT in response payload"})
         raise TimeoutError("timed out waiting for EOT in response payload")
 
@@ -335,9 +381,9 @@ class HardwareAPI:
         self._emit({"type": "ret", "method": "reset"})
 
     def monitor(self, enable: bool) -> None:
-        """Enable or disable the firmware's unstructured ASCII monitor output.
+        """Enable or disable the firmware's unframed JSON monitor output.
 
-        The ASCII monitor must be disabled before framed operations such as
+        The monitor must be disabled before framed operations such as
         :meth:`upload_rom` and :meth:`read_until_stp`, otherwise its free-form
         text would corrupt the framed protocol stream.
 
@@ -478,7 +524,7 @@ class HardwareAPI:
         The reset vector is reported back by the firmware after commit.
 
         Side effects:
-            Disables the ASCII monitor and flushes serial input before
+            Disables the JSON monitor and flushes serial input before
             transferring, so the framed protocol is not corrupted.
 
         Args:
@@ -555,7 +601,7 @@ class HardwareAPI:
         cycle and done frames.
 
         Side effects:
-            Disables the ASCII monitor, asserts then releases CPU reset. The
+            Disables the JSON monitor, asserts then releases CPU reset. The
             current PHI2 clock is preserved unless ``phi2_hz`` is provided.
 
         Args:

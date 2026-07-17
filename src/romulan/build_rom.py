@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
+from .output import emit_error, emit_result
+
 ROM_SIZE = 0x8000  # 32 KB
 ROM_BASE_ADDR = 0x8000  # ROM starts at CPU address $8000
 ERROR_COUNTER = 0  # Global counter for errors encountered during ROM build
@@ -276,10 +278,11 @@ def build_rom(input_path: Path, output_path: Path) -> None:
 
     master_error_list = error_processing(parsed)
     if ERROR_COUNTER > 0:
-        print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
-        for error in master_error_list:
-            print(f"  {error}")
-        print("ROM build failed due to errors.")
+        emit_error(
+            "build_failed",
+            f"Encountered {ERROR_COUNTER} errors while building ROM",
+            errors=[str(error) for error in master_error_list],
+        )
         sys.exit(1)
 
     rom = bytearray([0xEA] * ROM_SIZE)
@@ -306,6 +309,12 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     with open(output_path, "wb") as fh:
         fh.write(rom)
 
-    print(f"Wrote {len(rom)} bytes to {output_path}")
-    print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
-    print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
+    emit_result(
+        "build",
+        {
+            "bytes": len(rom),
+            "output": str(output_path),
+            "reset_vector": f"{rom[0x7FFD]:02X}{rom[0x7FFC]:02X}",
+            "irq_vector": f"{rom[0x7FFF]:02X}{rom[0x7FFE]:02X}",
+        },
+    )

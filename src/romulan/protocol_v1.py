@@ -108,7 +108,7 @@ class StatusResponse:
         last_data: Data byte from the last bus sample, as a hex string.
         last_rw: Read/write flag from the last bus sample (0 = read, 1 = write).
         read_active: Whether a bus-capture read is currently running.
-        monitor_enabled: Whether the ASCII monitor output is enabled.
+        monitor_enabled: Whether the JSON monitor output is enabled.
         upload_active: Whether a ROM upload is in progress.
         resb: Raw RESB (reset) input level (0 = low/asserted, 1 = high/released).
         rwb: Raw RWB input level (0 = write, 1 = read).

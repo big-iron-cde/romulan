@@ -121,6 +121,80 @@ class TestReset:
         assert msg["assert"] is True
 
 
+class TestFrameResync:
+    def test_reset_response_prefixed_with_monitor_garbage(self, mock_serial):
+        """ASCII monitor output preceding the JSON payload is skipped."""
+        garbage = b"| 01 |  EA  |  8000   |  0 | 1000.0 |\r\n"
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            garbage + b'{"v":1,"ok":true,"cmd":"reset","asserted":true}',
+        )
+
+        api = _make_api(mock_serial)
+        api.reset(assert_reset=True)
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["cmd"] == "reset"
+        assert msg["assert"] is True
+
+    def test_reset_release_response_prefixed_with_crlf(self, mock_serial):
+        """A CRLF-terminated monitor fragment before the payload is skipped."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b"\r\n" + b'{"v":1,"ok":true,"cmd":"reset","asserted":false}',
+        )
+
+        api = _make_api(mock_serial)
+        api.reset(assert_reset=False)
+
+    def test_resync_event_emitted_when_verbose(self, mock_serial, capsys):
+        """verbose=True reports how many stray bytes were skipped."""
+        garbage = b"\r\n+----+------+---------+----+-------+\r\n"
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            garbage + b'{"v":1,"ok":true,"cmd":"reset","asserted":true}',
+        )
+
+        api = _make_api(mock_serial, verbose=True)
+        api.reset(assert_reset=True)
+
+        captured = capsys.readouterr()
+        events = _parse_ndjson(captured.err)
+        resync_events = [e for e in events if e.get("event") == "resync"]
+        assert resync_events == [
+            {
+                "v": 1,
+                "type": "event",
+                "event": "resync",
+                "data": {"skipped_bytes": len(garbage)},
+            }
+        ]
+
+    def test_reset_response_prefixed_with_json_monitor_line(self, mock_serial):
+        """A JSON monitor event line before the payload is not mistaken for it."""
+        garbage = (
+            b'{"v":1,"type":"event","event":"monitor","data":'
+            b'{"seq":1,"addr":"8000","data":"EA","rw":0,"hz":1000.0}}\r\n'
+        )
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            garbage + b'{"v":1,"ok":true,"cmd":"reset","asserted":true}',
+        )
+
+        api = _make_api(mock_serial)
+        api.reset(assert_reset=True)
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["cmd"] == "reset"
+        assert msg["assert"] is True
+
+
 class TestPeek:
     def test_peek_success(self, mock_serial):
         _enqueue_transaction_acks(mock_serial)
@@ -418,14 +492,19 @@ class TestVerboseLogging:
 
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
-        assert events[0] == {"type": "call", "method": "request_addr"}
-        assert events[1]["type"] == "send"
-        assert events[1]["payload"]["cmd"] == "request_addr"
-        assert events[2] == {"type": "ack"}
-        assert events[3] == {"type": "ack"}
-        assert events[4]["type"] == "recv"
-        assert events[4]["payload"]["addr"] == "8000"
-        assert events[5] == {"type": "ret", "method": "request_addr", "result": 0x8000}
+        assert events[0] == {"v": 1, "type": "event", "event": "call", "data": {"method": "request_addr"}}
+        assert events[1]["event"] == "send"
+        assert events[1]["data"]["payload"]["cmd"] == "request_addr"
+        assert events[2] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[3] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[4]["event"] == "recv"
+        assert events[4]["data"]["payload"]["addr"] == "8000"
+        assert events[5] == {
+            "v": 1,
+            "type": "event",
+            "event": "ret",
+            "data": {"method": "request_addr", "result": 0x8000},
+        }
 
     def test_reset_verbose(self, mock_serial, capsys):
         """verbose=True emits JSON events for reset."""
@@ -437,12 +516,17 @@ class TestVerboseLogging:
 
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
-        assert events[0] == {"type": "call", "method": "reset", "assert_reset": True}
-        assert events[1]["type"] == "send"
-        assert events[2] == {"type": "ack"}
-        assert events[3] == {"type": "ack"}
-        assert events[4]["type"] == "recv"
-        assert events[5] == {"type": "ret", "method": "reset"}
+        assert events[0] == {
+            "v": 1,
+            "type": "event",
+            "event": "call",
+            "data": {"method": "reset", "assert_reset": True},
+        }
+        assert events[1]["event"] == "send"
+        assert events[2] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[3] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[4]["event"] == "recv"
+        assert events[5] == {"v": 1, "type": "event", "event": "ret", "data": {"method": "reset"}}
 
     def test_monitor_verbose(self, mock_serial, capsys):
         """verbose=True emits JSON events for monitor."""
@@ -454,12 +538,17 @@ class TestVerboseLogging:
 
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
-        assert events[0] == {"type": "call", "method": "monitor", "enable": False}
-        assert events[1]["type"] == "send"
-        assert events[2] == {"type": "ack"}
-        assert events[3] == {"type": "ack"}
-        assert events[4]["type"] == "recv"
-        assert events[5] == {"type": "ret", "method": "monitor"}
+        assert events[0] == {
+            "v": 1,
+            "type": "event",
+            "event": "call",
+            "data": {"method": "monitor", "enable": False},
+        }
+        assert events[1]["event"] == "send"
+        assert events[2] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[3] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[4]["event"] == "recv"
+        assert events[5] == {"v": 1, "type": "event", "event": "ret", "data": {"method": "monitor"}}
 
     def test_upload_rom_verbose(self, mock_serial, capsys):
         """verbose=True emits JSON events for upload_rom."""
@@ -503,10 +592,20 @@ class TestVerboseLogging:
 
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
-        assert events[0] == {"type": "call", "method": "upload_rom", "size": ROM_SIZE}
-        assert any(e == {"type": "call", "method": "monitor", "enable": False} for e in events)
+        assert events[0] == {
+            "v": 1,
+            "type": "event",
+            "event": "call",
+            "data": {"method": "upload_rom", "size": ROM_SIZE},
+        }
         assert any(
-            e["type"] == "ret" and e["method"] == "upload_rom" and e["result"]["bytes"] == ROM_SIZE
+            e.get("event") == "call" and e.get("data") == {"method": "monitor", "enable": False}
+            for e in events
+        )
+        assert any(
+            e.get("event") == "ret"
+            and e.get("data", {}).get("method") == "upload_rom"
+            and e["data"]["result"]["bytes"] == ROM_SIZE
             for e in events
         )
 
@@ -526,12 +625,19 @@ class TestVerboseLogging:
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
         assert events[0] == {
-            "type": "call",
-            "method": "read_until_stp",
-            "max_cycles": 500,
-            "batch_size": READ_EVENT_BATCH_SIZE,
+            "v": 1,
+            "type": "event",
+            "event": "call",
+            "data": {
+                "method": "read_until_stp",
+                "max_cycles": 500,
+                "batch_size": READ_EVENT_BATCH_SIZE,
+            },
         }
-        assert any(e["type"] == "ret" and e["method"] == "read_until_stp" for e in events)
+        assert any(
+            e.get("event") == "ret" and e.get("data", {}).get("method") == "read_until_stp"
+            for e in events
+        )
 
     def test_verbose_false_silent(self, mock_serial, capsys):
         """verbose=False produces no stderr output."""
@@ -557,10 +663,20 @@ class TestVerboseLogging:
 
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
-        assert events[0] == {"type": "send", "payload": {"binary": True, "bytes": 4}}
-        assert events[1] == {"type": "ack"}
-        assert events[2] == {"type": "ack"}
-        assert events[3] == {"type": "recv", "payload": {"ok": True, "v": 1}}
+        assert events[0] == {
+            "v": 1,
+            "type": "event",
+            "event": "send",
+            "data": {"payload": {"binary": True, "bytes": 4}},
+        }
+        assert events[1] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[2] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[3] == {
+            "v": 1,
+            "type": "event",
+            "event": "recv",
+            "data": {"payload": {"ok": True, "v": 1}},
+        }
 
     def test_error_logs_verbose(self, mock_serial, capsys):
         """NACK is emitted as a JSON error event in verbose mode."""
@@ -573,10 +689,20 @@ class TestVerboseLogging:
 
         captured = capsys.readouterr()
         events = _parse_ndjson(captured.err)
-        assert events[0] == {"type": "send", "payload": {"binary": True, "bytes": 1}}
-        assert events[1] == {"type": "ack"}
-        assert events[2] == {"type": "nack"}
-        assert events[3] == {"type": "error", "error": "nack", "detail": "Pico responded with NACK"}
+        assert events[0] == {
+            "v": 1,
+            "type": "event",
+            "event": "send",
+            "data": {"payload": {"binary": True, "bytes": 1}},
+        }
+        assert events[1] == {"v": 1, "type": "event", "event": "ack"}
+        assert events[2] == {"v": 1, "type": "event", "event": "nack"}
+        assert events[3] == {
+            "v": 1,
+            "type": "error",
+            "error": "nack",
+            "detail": "Pico responded with NACK",
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -136,7 +136,7 @@ Romulan speaks the Piclone firmware's **v1 JSON protocol** over USB-CDC at 11520
 |------------|-----------|-------------|
 | `hardware upload` | `<bin_path> [--port] [-v]` | Upload a ROM binary via the framed protocol |
 | `hardware capture` | `--max-cycles <N> [--port] [-v]` | Capture CPU bus cycles until STP or max cycles reached |
-| `hardware monitor` | `--enable \| --disable [--port] [-v]` | Toggle unstructured ASCII monitor output |
+| `hardware monitor` | `--enable \| --disable [--port] [-v]` | Toggle JSON monitor output |
 | `hardware reset` | `--assert \| --release [--port] [-v]` | Hold or release the CPU reset line |
 | `hardware request-addr` | `[--port] [-v]` | Request the current CPU address |
 

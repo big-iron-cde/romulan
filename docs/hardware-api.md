@@ -22,6 +22,28 @@ with HardwareAPI("/dev/ttyACM0") as api:
 
 `HardwareAPI` opens the serial port on construction and closes it on exit from a `with` block.
 
+## Output schema (v1)
+
+Everything the `romulan` CLI prints is a single self-contained JSON object per line
+(NDJSON), always carrying `"v":1` and `"type"`:
+
+| Type | Shape | Stream |
+|------|-------|--------|
+| `result` | `{"v":1,"type":"result","cmd":"<cmd>","data":{...}}` | stdout |
+| `event` | `{"v":1,"type":"event","event":"<name>","data":{...}}` | stdout (domain events), stderr (trace/port detection) |
+| `error` | `{"v":1,"type":"error","error":"<code>","detail":"<msg>"}` (+ optional `"errors":[...]`) | stderr |
+
+```bash
+$ uv run romulan hardware reset --assert
+{"v":1,"type":"result","cmd":"reset","data":{"asserted":true}}
+```
+
+Domain events are emitted for streamed data (one `cycle` event per captured bus
+cycle) and for port auto-detection (`port_detected`, stderr). With `--verbose`,
+the protocol trace (`open`/`send`/`recv`/`ack`/`call`/`ret`/`resync`, …) is
+emitted as `event` objects on stderr, so stdout stays parseable as pure command
+output. See `romulan/output.py` for the canonical definition.
+
 ## Framed protocol
 
 Every command and response travels inside a byte-level frame:
@@ -43,7 +65,7 @@ All JSON payloads include `"v": 1`. An optional `"id"` field is echoed in respon
 |---------|---------|
 | `upload_rom` | Upload 32 KB ROM (begin → chunk × N → commit) |
 | `reset` | Assert or release CPU reset |
-| `monitor` | Enable or disable ASCII bus monitor |
+| `monitor` | Enable or disable the JSON bus monitor |
 | `request_addr` | Read current CPU address |
 | `read` | Capture bus cycles until STP or max cycles |
 | `clock` | Set PHI2 clock frequency (0.1–1000 Hz) |
@@ -57,7 +79,7 @@ The upload is a three-phase sequence with base64-encoded chunks (max 1,476 raw b
 2. `{"v":1,"cmd":"upload_rom","action":"chunk","offset":N,"data":"<base64>"}` — repeated
 3. `{"v":1,"cmd":"upload_rom","action":"commit"}` — returns `reset_vector`
 
-`upload_rom()` disables the ASCII monitor and flushes serial input before transferring.
+`upload_rom()` disables the JSON monitor and flushes serial input before transferring.
 
 ### Bus capture
 
@@ -100,7 +122,8 @@ bus sample (`last_addr`, `last_data`, `last_rw`).
 ## Important notes
 
 - Do not open a plain serial monitor on the port while using the framed protocol — unstructured output corrupts framing.
-- Disable the ASCII monitor before scripted upload or capture (the client methods do this automatically).
+- Disable the JSON monitor before scripted upload or capture (the client methods do this automatically).
+- If unstructured lines (monitor output) do precede a response frame, the client resynchronizes by taking the text after the last newline, from the first `{` — this skips both legacy ASCII monitor rows and newline-terminated JSON monitor lines. With `--verbose` this is reported as a `{"v":1,"type":"event","event":"resync","data":{"skipped_bytes":N}}` event. Bytes interleaved *inside* a payload still fail parsing, so keeping the monitor off during scripted sessions remains the recommendation.
 - The ROM image in Pico SRAM is lost on power cycle — re-upload after each reboot.
 
 ## Python API reference

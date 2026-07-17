@@ -308,10 +308,12 @@ class TestHardwareVerbose:
     @patch("romulan.main.HardwareAPI")
     def test_status(self, mock_hw_cls: MagicMock) -> None:
         """hardware status prints the firmware status snapshot."""
+        from romulan.protocol_v1 import StatusResponse
+
         mock_api = MagicMock()
         mock_api.__enter__ = MagicMock(return_value=mock_api)
         mock_api.__exit__ = MagicMock(return_value=False)
-        mock_api.status.return_value = MagicMock(
+        mock_api.status.return_value = StatusResponse(
             phi2_hz=1000.0,
             rom_active=True,
             reset_asserted=False,
@@ -372,3 +374,116 @@ class TestHardwareVerbose:
             main()
 
         mock_api.drive.assert_called_once_with(None)
+
+
+class TestJsonOutput:
+    """The CLI emits the v1 JSON output schema on stdout/stderr."""
+
+    @staticmethod
+    def _mock_api() -> MagicMock:
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        return mock_api
+
+    @staticmethod
+    def _parse_ndjson(text: str) -> list:
+        import json
+
+        return [json.loads(line) for line in text.strip().splitlines() if line.strip()]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_reset_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware reset --assert prints a result/reset object to stdout."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "reset", "--assert", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert objects == [
+            {"v": 1, "type": "result", "cmd": "reset", "data": {"asserted": True}}
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_reset_flag_conflict_error_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """Conflicting reset flags print an error/bad_args object to stderr."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "reset", "--assert", "--release", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        objects = self._parse_ndjson(capsys.readouterr().err)
+        errors = [o for o in objects if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "Cannot specify both --assert and --release",
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_status_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware status prints the full snapshot as result/status."""
+        from romulan.protocol_v1 import StatusResponse
+
+        mock_api = self._mock_api()
+        mock_api.status.return_value = StatusResponse(
+            phi2_hz=1000.0,
+            rom_active=True,
+            reset_asserted=False,
+            last_addr="F000",
+            read_active=False,
+            monitor_enabled=False,
+        )
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "status", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert len(objects) == 1
+        obj = objects[0]
+        assert obj["v"] == 1
+        assert obj["type"] == "result"
+        assert obj["cmd"] == "status"
+        assert obj["data"]["phi2_hz"] == 1000.0
+        assert obj["data"]["rom_active"] is True
+        assert obj["data"]["last_addr"] == "F000"
+
+    @patch("romulan.main.HardwareAPI")
+    def test_request_addr_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware request-addr prints result/request_addr with a hex address."""
+        mock_api = self._mock_api()
+        mock_api.request_addr.return_value = 0x8000
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "request-addr", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert objects == [
+            {"v": 1, "type": "result", "cmd": "request_addr", "data": {"addr": "8000"}}
+        ]
