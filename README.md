@@ -68,6 +68,7 @@ uv run romulan hardware reset --assert
 uv run romulan hardware reset --release
 uv run romulan hardware monitor --disable
 uv run romulan hardware request-addr
+uv run romulan hardware peek --addr 0x4000
 ```
 
 ### Python client
@@ -134,6 +135,7 @@ Romulan speaks the Piclone firmware's **v1 JSON protocol** over USB-CDC at 11520
 | `hardware monitor` | `--enable \| --disable [--port] [-v]` | Toggle unstructured ASCII monitor output |
 | `hardware reset` | `--assert \| --release [--port] [-v]` | Hold or release the CPU reset line |
 | `hardware request-addr` | `[--port] [-v]` | Request the current CPU address |
+| `hardware peek` | `--addr <hex> [--port] [-v]` | Live-peek one CPU bus/RAM byte (briefly resets the CPU) |
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -143,6 +145,8 @@ Romulan speaks the Piclone firmware's **v1 JSON protocol** over USB-CDC at 11520
 Full firmware-side protocol reference: [Piclone Hardware API docs](https://big-iron-cde.github.io/piclone/hardware-api.html).
 
 Captured cycles include `rw`: **0 = read**, **1 = write**. Piclone firmware on Pico 2 **infers** this from **A15** (ROM region = read, RAM region = write), not from a wired RWB sense pin—so STA/store cycles report `rw=1` and opcode fetches report `rw=0`.
+
+`hardware peek --addr` is a **live** bus/RAM read (the firmware runs a short LDA/STP stub and samples the matching cycle). It is not a ROM-image offset read. The CPU is held in reset around the peek. Requires piclone wiring **RAM OE# = NOT(RWB)**.
 
 #### Verbose example
 

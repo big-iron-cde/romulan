@@ -45,6 +45,7 @@ All JSON payloads include `"v": 1`. An optional `"id"` field is echoed in respon
 | `reset` | Assert or release CPU reset |
 | `monitor` | Enable or disable ASCII bus monitor |
 | `request_addr` | Read current CPU address |
+| `peek` | Live-peek one CPU bus/RAM byte (LDA stub; briefly resets CPU) |
 | `read` | Capture bus cycles until STP or max cycles |
 | `status` | Query firmware state (clock, reset, ROM, monitor) |
 
@@ -67,10 +68,20 @@ Send `{"v":1,"cmd":"read","until":"stp","max_cycles":N}` and receive streaming e
 
 `read_until_stp()` disables the monitor before starting capture.
 
+### Live peek
+
+`peek(addr)` asks the firmware to reset the CPU, run `LDA $addr` / `STP` from `$8000`, and return the data byte sampled on the matching address cycle. Use this to read live RAM (e.g. `$4000` after an STA), not a host ROM-image offset. The breadboard must wire **RAM OE# = NOT(RWB)**; with OE# tied high, peeks see open bus (often the address high byte).
+
+```python
+result = api.peek(0x4000)
+print(f"${result.addr:04X} = ${result.data:02X}")
+```
+
 ## Important notes
 
 - Do not open a plain serial monitor on the port while using the framed protocol — unstructured output corrupts framing.
 - Disable the ASCII monitor before scripted upload or capture (the client methods do this automatically).
+- Live `peek` briefly asserts reset around the stub program; do not rely on CPU state surviving a peek.
 - The ROM image in Pico SRAM is lost on power cycle — re-upload after each reboot.
 
 ## Python API reference

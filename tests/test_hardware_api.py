@@ -463,6 +463,41 @@ class TestFirmwareWithoutVersionField:
         assert api.request_addr() == 32768
 
 
+class TestPeek:
+    def test_peek_success(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"peek","addr":"4000","data":"14"}',
+        )
+
+        api = _make_api(mock_serial)
+        result = api.peek(0x4000)
+        assert result.addr == 0x4000
+        assert result.data == 0x14
+
+        payload = mock_serial.write.call_args_list[2][0][0]
+        msg = json.loads(payload)
+        assert msg["cmd"] == "peek"
+        assert msg["addr"] == "4000"
+
+    def test_peek_missing_cycle_error(self, mock_serial):
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":false,"error":"no_cycle","detail":"no bus cycle matched addr"}',
+        )
+
+        api = _make_api(mock_serial)
+        with pytest.raises(HardwareAPIError, match="no bus cycle matched addr"):
+            api.peek(0x4000)
+
+    def test_peek_addr_out_of_range(self, mock_serial):
+        api = _make_api(mock_serial)
+        with pytest.raises(ValueError, match="0..0xFFFF"):
+            api.peek(0x10000)
+
+
 class TestHardwareAPIIntegration:
     @patch("romulan.hardware_api.serial.Serial")
     def test_context_manager(self, mock_serial_cls):

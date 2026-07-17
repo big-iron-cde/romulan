@@ -5,8 +5,8 @@ framed JSON protocol implemented by the Pico firmware. It handles the
 low-level ENQ/STX/ACK/EOT framing, encodes commands built by
 :mod:`romulan.protocol_v1`, and exposes friendly methods for the common
 operations: querying the current CPU address, asserting/releasing reset,
-toggling the ASCII monitor, reading status, uploading a ROM image, and
-capturing bus cycles.
+toggling the ASCII monitor, reading status, uploading a ROM image,
+live-peeking a CPU bus address, and capturing bus cycles.
 
 Opening a :class:`HardwareAPI` immediately opens the underlying serial port.
 The class supports the context-manager protocol so the port is always closed::
@@ -31,6 +31,7 @@ from .protocol_v1 import (
     CHUNK_RAW_MAX,
     ROM_SIZE,
     CycleEvent,
+    PeekResult,
     ProtocolV1Error,
     ReadResult,
     StatusResponse,
@@ -38,6 +39,7 @@ from .protocol_v1 import (
     parse_cycle_event,
     parse_done_event,
     parse_frame,
+    parse_peek_response,
     parse_status,
     parse_upload_response,
 )
@@ -319,6 +321,45 @@ class HardwareAPI:
         addr_int = self._parse_addr(addr)
         self._emit({"type": "ret", "method": "request_addr", "result": addr_int})
         return addr_int
+
+    def peek(self, addr: int) -> PeekResult:
+        """Live-peek one byte by running a short LDA absolute / STP stub on the CPU.
+
+        The firmware briefly resets the 65C02, patches ``LDA $addr`` / ``STP`` at
+        ``$8000``, samples the data byte on the bus cycle whose address matches
+        ``addr``, then restores the previous ROM bytes. This reads live RAM (or
+        ROM) contents — not a host-side ROM-image offset.
+
+        Args:
+            addr: CPU address to read (``0``–``0xFFFF``).
+
+        Returns:
+            A :class:`~romulan.protocol_v1.PeekResult` with ``addr`` and ``data``.
+
+        Raises:
+            ValueError: If ``addr`` is outside ``0``–``0xFFFF``.
+            HardwareAPIError: If the firmware reports an error (timeout, no
+                matching cycle, busy, etc.).
+            TimeoutError: If the Pico does not respond in time.
+        """
+        if not 0 <= addr <= 0xFFFF:
+            raise ValueError(f"addr must be 0..0xFFFF, got {addr}")
+        self._emit({"type": "call", "method": "peek", "addr": addr})
+        resp = self._exchange_json(
+            build_request("peek", req_id=self._next_id(), addr=f"{addr:04X}")
+        )
+        try:
+            result = parse_peek_response(resp)
+        except ProtocolV1Error as exc:
+            raise HardwareAPIError(str(exc)) from exc
+        self._emit(
+            {
+                "type": "ret",
+                "method": "peek",
+                "result": {"addr": result.addr, "data": result.data},
+            }
+        )
+        return result
 
     def reset(self, assert_reset: bool) -> None:
         """Assert or release the 65C02 RESET line.

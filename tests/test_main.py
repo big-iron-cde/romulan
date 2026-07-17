@@ -271,3 +271,23 @@ class TestHardwareVerbose:
             main()
 
         mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=False)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_prints_addr_data(self, mock_hw_cls: MagicMock, capsys) -> None:
+        from romulan.protocol_v1 import PeekResult
+
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.peek.return_value = PeekResult(addr=0x4000, data=0x14)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--addr", "0x4000", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(0x4000)
+        assert "$4000 = $14" in capsys.readouterr().out

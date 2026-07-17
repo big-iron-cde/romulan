@@ -49,6 +49,7 @@ uv run romulan hardware <subcommand> [--port PORT] [--verbose]
 | `monitor` | `--enable` or `--disable` | Toggle ASCII monitor output |
 | `reset` | `--assert` or `--release` | Hold or release CPU reset |
 | `request-addr` | — | Read the current CPU address |
+| `peek` | `--addr HEX` | Live-peek one bus/RAM byte (briefly resets CPU) |
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -64,6 +65,7 @@ uv run romulan hardware reset --assert
 uv run romulan hardware reset --release
 uv run romulan hardware monitor --disable
 uv run romulan hardware request-addr
+uv run romulan hardware peek --addr 0x4000
 ```
 
 ## Verbose output

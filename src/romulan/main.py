@@ -86,7 +86,7 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     """Create a dedicated parser for the ``hardware`` sub-command.
 
     The ``hardware`` command has its own subcommands (``upload``, ``capture``,
-    ``monitor``, ``reset``, ``request-addr``), each sharing the common
+    ``monitor``, ``reset``, ``request-addr``, ``peek``), each sharing the common
     ``--port`` and ``--verbose`` options.
 
     Returns:
@@ -187,7 +187,39 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     _add_common_args(addr_parser)
 
+    # --- peek ---
+    peek_parser = sub.add_parser(
+        "peek",
+        help="Live-peek one CPU bus/RAM byte (resets CPU briefly)",
+    )
+    peek_parser.add_argument(
+        "--addr",
+        required=True,
+        type=_parse_cpu_addr,
+        help="CPU address as hex (e.g. 0x4000 or 4000)",
+    )
+    _add_common_args(peek_parser)
+
     return parser
+
+
+def _parse_cpu_addr(text: str) -> int:
+    """Parse a CPU address from CLI hex (``0x4000``, ``4000``, ``0X4000``)."""
+    raw = text.strip()
+    try:
+        if raw.lower().startswith("0x"):
+            value = int(raw, 16)
+        else:
+            value = int(raw, 16)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid address {text!r}; use hex like 0x4000 or 4000"
+        ) from exc
+    if not 0 <= value <= 0xFFFF:
+        raise argparse.ArgumentTypeError(
+            f"address out of range: {text!r} (must be 0000–FFFF)"
+        )
+    return value
 
 
 def _resolve_port(port: str | None) -> str:
@@ -290,6 +322,10 @@ def _handle_hardware(args: argparse.Namespace) -> None:
             elif cmd == "request-addr":
                 addr = api.request_addr()
                 print(f"Current CPU address: 0x{addr:04X}")
+
+            elif cmd == "peek":
+                result = api.peek(args.addr)
+                print(f"${result.addr:04X} = ${result.data:02X}")
 
     except (HardwareAPIError, TimeoutError) as exc:
         print(f"ERROR: Hardware API failed: {exc}", file=sys.stderr)
