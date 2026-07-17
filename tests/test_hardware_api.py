@@ -68,6 +68,25 @@ def _parse_ndjson(stderr: str) -> list[dict]:
     return [json.loads(line) for line in stderr.strip().splitlines() if line.strip()]
 
 
+def _enqueue_exchange(mock_serial, response_payload: bytes):
+    """Queue host→pico ACKs plus a pico→host response frame."""
+    _enqueue_transaction_acks(mock_serial)
+    _enqueue_response(mock_serial, response_payload)
+
+
+def _enqueue_capture_arm(mock_serial, *, max_cycles: int = 500):
+    """Queue monitor + reset assert + read + reset release exchanges."""
+    _enqueue_exchange(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
+    _enqueue_exchange(mock_serial, b'{"v":1,"ok":true,"cmd":"reset","asserted":true}')
+    _enqueue_exchange(
+        mock_serial,
+        (
+            f'{{"v":1,"ok":true,"cmd":"read","until":"stp","max_cycles":{max_cycles}}}'
+        ).encode(),
+    )
+    _enqueue_exchange(mock_serial, b'{"v":1,"ok":true,"cmd":"reset","asserted":false}')
+
+
 class TestSendFrame:
     def test_basic_json_roundtrip(self, mock_serial):
         request = json.dumps(build_request("request_addr", req_id="t1")).encode()
@@ -148,22 +167,14 @@ class TestUploadRom:
 
 class TestReadUntilStp:
     def test_capture_result(self, mock_serial):
-        _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
-
-        _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(
+        _enqueue_capture_arm(mock_serial, max_cycles=500)
+        _enqueue_exchange(
             mock_serial,
-            b'{"v":1,"ok":true,"cmd":"read","until":"stp","max_cycles":500}',
+            b'{"v":1,"ok":true,"type":"event","event":"cycle","seq":1,"addr":"8000","data":"18","rw":0}',
         )
-
-        _enqueue_response(
+        _enqueue_exchange(
             mock_serial,
-            b'{"v":1,"type":"event","event":"cycle","seq":1,"addr":"8000","data":"18","rw":0}',
-        )
-        _enqueue_response(
-            mock_serial,
-            b'{"v":1,"type":"event","event":"done","ok":true,"reason":"stp","cycles":1,"addr":"8001"}',
+            b'{"v":1,"ok":true,"type":"event","event":"done","reason":"stp","cycles":1,"addr":"8001"}',
         )
 
         api = _make_api(mock_serial)
@@ -174,24 +185,33 @@ class TestReadUntilStp:
 
     def test_uses_instance_timeout_when_no_frame_timeout(self, mock_serial):
         """read_until_stp defaults frame_timeout to self.timeout."""
-        _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
-
-        _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(
+        _enqueue_capture_arm(mock_serial, max_cycles=10)
+        _enqueue_exchange(
             mock_serial,
-            b'{"v":1,"ok":true,"cmd":"read","until":"stp","max_cycles":10}',
-        )
-
-        _enqueue_response(
-            mock_serial,
-            b'{"v":1,"type":"event","event":"done","ok":true,"reason":"stp","cycles":0,"addr":"8000"}',
+            b'{"v":1,"ok":true,"type":"event","event":"done","reason":"stp","cycles":0,"addr":"8000"}',
         )
 
         api = _make_api(mock_serial)
         api.timeout = 99.0
         result = api.read_until_stp(max_cycles=10)
         assert result.reason == "stp"
+
+    def test_on_cycle_callback(self, mock_serial):
+        _enqueue_capture_arm(mock_serial, max_cycles=10)
+        _enqueue_exchange(
+            mock_serial,
+            b'{"v":1,"ok":true,"type":"event","event":"cycle","seq":1,"addr":"8000","data":"18","rw":0}',
+        )
+        _enqueue_exchange(
+            mock_serial,
+            b'{"v":1,"ok":true,"type":"event","event":"done","reason":"stp","cycles":1,"addr":"8000"}',
+        )
+
+        seen = []
+        api = _make_api(mock_serial)
+        api.read_until_stp(max_cycles=10, on_cycle=seen.append)
+        assert len(seen) == 1
+        assert seen[0].addr == "8000"
 
 
 # ---------------------------------------------------------------------------
@@ -325,17 +345,10 @@ class TestVerboseLogging:
 
     def test_read_until_stp_verbose(self, mock_serial, capsys):
         """verbose=True emits JSON events for read_until_stp."""
-        _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(mock_serial, b'{"v":1,"ok":true,"cmd":"monitor","enable":false}')
-
-        _enqueue_transaction_acks(mock_serial)
-        _enqueue_response(
+        _enqueue_capture_arm(mock_serial, max_cycles=500)
+        _enqueue_exchange(
             mock_serial,
-            b'{"v":1,"ok":true,"cmd":"read","until":"stp","max_cycles":500}',
-        )
-        _enqueue_response(
-            mock_serial,
-            b'{"v":1,"type":"event","event":"done","ok":true,"reason":"stp","cycles":0,"addr":"8000"}',
+            b'{"v":1,"ok":true,"type":"event","event":"done","reason":"stp","cycles":0,"addr":"8000"}',
         )
 
         api = _make_api(mock_serial, verbose=True)

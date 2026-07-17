@@ -23,7 +23,7 @@ import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import serial
 
@@ -49,6 +49,8 @@ ACK = 0x06
 EOT = 0x04
 NACK = 0x15
 
+# PHI2 rate requested when arming bus capture (must match piclone default on make-it-faster).
+CAPTURE_PHI2_HZ = 1000.0
 
 
 class HardwareAPIError(Exception):
@@ -437,22 +439,25 @@ class HardwareAPI:
         self,
         max_cycles: int = 10000,
         frame_timeout: float | None = None,
+        on_cycle: Callable[[CycleEvent], None] | None = None,
     ) -> CaptureResult:
         """Capture CPU bus cycles until the CPU executes STP or a limit is hit.
 
-        Streams ``cycle`` events from the firmware and stops on the terminating
-        ``done`` event (reached when the CPU halts via STP or ``max_cycles`` is
-        reached).
+        Holds reset, arms ``read``, then releases reset so capture starts from
+        the reset vector (typically ``$8000``). Polls ``read_event`` for cycle
+        and done frames.
 
         Side effects:
-            Disables the ASCII monitor and flushes serial input before
-            starting the capture.
+            Disables the ASCII monitor, asserts then releases CPU reset, and
+            may change PHI2 via ``phi2_hz`` on the read command.
 
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
                 firmware stops. Defaults to ``10000``.
-           frame_timeout: Per-frame read timeout in seconds while waiting for
-                cycle/done events. Defaults to :attr:`self.timeout`.
+            frame_timeout: Overall capture timeout in seconds while polling
+                for cycle/done events. Defaults to :attr:`timeout`.
+            on_cycle: Optional callback invoked for each captured cycle (e.g.
+                for live CLI output).
 
         Returns:
             A :class:`CaptureResult` with the stop reason and captured cycles.
@@ -460,12 +465,15 @@ class HardwareAPI:
         Raises:
             HardwareAPIError: If the read is rejected or an unexpected frame
                 arrives.
-            TimeoutError: If the Pico stops sending frames before ``done``.
+            TimeoutError: If the capture does not complete in time.
         """
         resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
         self._emit({"type": "call", "method": "read_until_stp", "max_cycles": max_cycles})
         self.monitor(enable=False)
         self._drain_input()
+
+        # Restart CPU from reset vector once capture is armed.
+        self.reset(assert_reset=True)
 
         ack = self._exchange_json(
             build_request(
@@ -473,29 +481,54 @@ class HardwareAPI:
                 req_id=self._next_id(),
                 until="stp",
                 max_cycles=max_cycles,
+                phi2_hz=CAPTURE_PHI2_HZ,
             )
         )
         if not ack.get("ok"):
             raise HardwareAPIError(f"read rejected: {ack}")
 
+        time.sleep(0.03)
+        self.reset(assert_reset=False)
+
+        self._emit({"type": "waiting", "for": "read_event", "timeout_s": resolved_timeout})
+
         cycles: list[CycleEvent] = []
         result = ReadResult(ok=False, reason="unknown")
+        deadline = time.time() + resolved_timeout
+        poll_idle_s = 0.005
 
-        while True:
-            msg = self._recv_json_frame(timeout=resolved_timeout)
-            if msg.get("type") == "event" and msg.get("event") == "cycle":
-                cycles.append(parse_cycle_event(msg))
-            elif msg.get("type") == "event" and msg.get("event") == "done":
-                done = parse_done_event(msg)
-                result = ReadResult(
-                    ok=done.ok,
-                    reason=done.reason,
-                    cycles=cycles,
-                    stopped_addr=done.addr,
+        try:
+            while time.time() < deadline:
+                msg = self._exchange_json(
+                    build_request("read_event", req_id=self._next_id())
                 )
-                break
+                event = msg.get("event")
+                if msg.get("type") == "event" and event == "cycle":
+                    cycle = parse_cycle_event(msg)
+                    if on_cycle is not None:
+                        on_cycle(cycle)
+                    cycles.append(cycle)
+                    deadline = time.time() + resolved_timeout
+                elif msg.get("type") == "event" and event == "done":
+                    done = parse_done_event(msg)
+                    result = ReadResult(
+                        ok=done.ok,
+                        reason=done.reason,
+                        cycles=cycles,
+                        stopped_addr=done.addr,
+                    )
+                    break
+                elif event == "none":
+                    time.sleep(poll_idle_s)
+                else:
+                    raise HardwareAPIError(f"unexpected frame during read: {msg}")
             else:
-                raise HardwareAPIError(f"unexpected frame during read: {msg}")
+                raise TimeoutError(
+                    f"timed out after read ack (got {len(cycles)} cycles). "
+                    "No STP/done yet — is PHI2 running? Try --timeout 60."
+                )
+        except TimeoutError:
+            raise
 
         capture = CaptureResult.from_read_result(result)
         self._emit({"type": "ret", "method": "read_until_stp", "result": asdict(capture)})

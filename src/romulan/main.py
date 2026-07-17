@@ -24,7 +24,8 @@ from pathlib import Path
 import serial
 
 from .build_rom import build_rom
-from .upload_rom import find_pico_port, upload
+from .hardware_api import HardwareAPI, HardwareAPIError
+from .upload_rom import find_pico_port
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -53,7 +54,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--upload",
         action="store_true",
-        help="Upload the ROM image to the Pico (plain-text protocol)",
+        help="Upload the ROM image to the Pico (framed Hardware API)",
     )
     parser.add_argument(
         "-o", "--output",
@@ -220,10 +221,12 @@ def _handle_hardware(args: argparse.Namespace) -> None:
         args: Parsed arguments from the ``hardware`` sub-parser; must include
             ``hw_cmd``, ``port``, and ``verbose``.
     """
-    from .hardware_api import HardwareAPI, HardwareAPIError
-
     cmd = args.hw_cmd
-    port = _resolve_port(args.port)
+    try:
+        port = _resolve_port(args.port)
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     try:
         with HardwareAPI(port, timeout=args.timeout, verbose=args.verbose) as api:
@@ -231,13 +234,26 @@ def _handle_hardware(args: argparse.Namespace) -> None:
                 data = args.bin_path.read_bytes()
                 result = api.upload_rom(data)
                 print(f"Upload result: {result}")
+                print(
+                    "CPU held in reset — run `hardware capture` "
+                    "or `hardware reset --release` to run."
+                )
 
             elif cmd == "capture":
-                result = api.read_until_stp(max_cycles=args.max_cycles)
+                print("Capturing…", flush=True)
+
+                def _print_cycle(cycle) -> None:
+                    print(
+                        f"  #{cycle.seq}  addr={cycle.addr} data={cycle.data} rw={cycle.rw}",
+                        flush=True,
+                    )
+
+                result = api.read_until_stp(
+                    max_cycles=args.max_cycles,
+                    on_cycle=_print_cycle,
+                )
                 print(f"Capture finished: {result.reason}")
                 print(f"Cycles captured: {len(result.cycles)}")
-                for cycle in result.cycles:
-                    print(f"  {cycle}")
 
             elif cmd == "monitor":
                 if args.enable and args.disable:
@@ -341,12 +357,21 @@ def main() -> None:
             )
 
         try:
-            upload(port, args.output)
+            with HardwareAPI(port) as api:
+                result = api.upload_rom(args.output.read_bytes())
+            print(f"Upload result: {result}")
+            print(
+                "CPU held in reset — run `romulan hardware capture` "
+                "or `romulan hardware reset --release` to run."
+            )
+        except (HardwareAPIError, TimeoutError) as exc:
+            print(f"ERROR: Hardware API failed: {exc}", file=sys.stderr)
+            sys.exit(1)
         except serial.SerialException as exc:
             print(f"ERROR: Serial communication failed: {exc}", file=sys.stderr)
             sys.exit(1)
-        except TimeoutError as exc:
-            print(f"ERROR: Upload timed out: {exc}", file=sys.stderr)
+        except ValueError as exc:
+            print(f"ERROR: Upload failed: {exc}", file=sys.stderr)
             sys.exit(1)
 
 
