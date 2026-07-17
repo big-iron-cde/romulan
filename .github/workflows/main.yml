@@ -52,5 +52,4 @@ jobs:
       run: uv run romulan hardware monitor --disable --verbose
 
     - name: hardware monitor --enable
-      continue-on-error: true
       run: uv run romulan hardware monitor --enable --verbose
