@@ -24,7 +24,8 @@ jobs:
 
     - name: Build test ROM
       run: |
-        uv run romulan demo.txt --build
+        mkdir bin
+        romulan src/rom.s --build -o bin/rom.bin
 
     - name: Test hardware API commands
       run: |
