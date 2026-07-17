@@ -9,7 +9,7 @@ on:
 jobs:
   hardware-test:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
       with:
@@ -23,11 +23,9 @@ jobs:
         uv sync
 
     - name: Build test ROM
-      run: uv run romulan demo.txt --build
-
-    - name: Test legacy upload
-      continue-on-error: true
-      run: uv run romulan --upload
+      run: |
+        mkdir bin
+        romulan src/rom.s --build -o bin/rom.bin
 
     - name: Test hardware API commands
       run: |
