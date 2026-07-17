@@ -30,12 +30,12 @@ jobs:
     - name: Test hardware API commands
       continue-on-error: true
       run: |
-        echo "=== hardware reset --assert ==="
-        uv run romulan hardware reset --assert --verbose || true
-        sleep 2
-
         echo "=== hardware upload ==="
         uv run romulan hardware upload bin/rom.bin --verbose 
+        sleep 2
+
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert --verbose || true
         sleep 2
 
         echo "=== hardware reset --release ==="
