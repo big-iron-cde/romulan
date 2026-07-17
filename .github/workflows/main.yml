@@ -31,7 +31,7 @@ jobs:
       continue-on-error: true
       run: |
         echo "=== hardware reset --assert ==="
-        uv run romulan hardware reset --assert --verbose || true
+        uv run romulan hardware reset --assert --verbose
         sleep 2
 
         echo "=== hardware upload ==="
