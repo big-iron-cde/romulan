@@ -31,28 +31,28 @@ jobs:
       continue-on-error: true
       run: |
         echo "=== hardware reset --assert ==="
-        uv run romulan hardware reset --assert --verbose || true
+        uv run romulan hardware reset --assert --verbose 
         sleep 2
 
         echo "=== hardware upload ==="
-        uv run romulan hardware upload bin/rom.bin --verbose || true
+        uv run romulan hardware upload bin/rom.bin --verbose 
         sleep 2
 
         echo "=== hardware reset --release ==="
-        uv run romulan hardware reset --release --verbose || true
+        uv run romulan hardware reset --release --verbose 
         sleep 2
 
         echo "=== hardware capture (default timeout) ==="
-        uv run romulan hardware capture --max-cycles 500 --verbose || true
+        uv run romulan hardware capture --max-cycles 500 --verbose 
         sleep 2
 
         echo "=== hardware capture (custom timeout) ==="
-        uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose || true
+        uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose 
         sleep 2
 
         echo "=== hardware monitor --disable ==="
-        uv run romulan hardware monitor --disable --verbose || true
+        uv run romulan hardware monitor --disable --verbose 
         sleep 2
 
         echo "=== hardware monitor --enable ==="
-        uv run romulan hardware monitor --enable --verbose || true
+        uv run romulan hardware monitor --enable --verbose 
