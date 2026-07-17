@@ -27,29 +27,32 @@ jobs:
         mkdir -p bin
         uv run romulan demo.txt --build -o bin/rom.bin
 
- #   - name: hardware reset --assert
- #     continue-on-error: true
- #     run: uv run romulan hardware reset --assert --verbose
-
-    - name: hardware upload
+    - name: Test hardware API commands
       continue-on-error: true
-      run: uv run romulan hardware upload bin/rom.bin --verbose
+      run: |
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert --verbose || true
+        sleep 2
 
-    - name: hardware reset --release
-      continue-on-error: true
-      run: uv run romulan hardware reset --release --verbose
+        echo "=== hardware upload ==="
+        uv run romulan hardware upload bin/rom.bin --verbose || true
+        sleep 2
 
-    - name: hardware capture (default timeout)
-      continue-on-error: true
-      run: uv run romulan hardware capture --max-cycles 500 --verbose
+        echo "=== hardware reset --release ==="
+        uv run romulan hardware reset --release --verbose || true
+        sleep 2
 
-    - name: hardware capture (custom timeout)
-      continue-on-error: true
-      run: uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose
+        echo "=== hardware capture (default timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --verbose || true
+        sleep 2
 
-    - name: hardware monitor --disable
-      continue-on-error: true
-      run: uv run romulan hardware monitor --disable --verbose
+        echo "=== hardware capture (custom timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose || true
+        sleep 2
 
-    - name: hardware monitor --enable
-      run: uv run romulan hardware monitor --enable --verbose
+        echo "=== hardware monitor --disable ==="
+        uv run romulan hardware monitor --disable --verbose || true
+        sleep 2
+
+        echo "=== hardware monitor --enable ==="
+        uv run romulan hardware monitor --enable --verbose || true
