@@ -87,6 +87,24 @@ class TestBuildRom:
             build_rom(path, out)
 
 
+@pytest.fixture
+def sample_asm_file(tmp_path: Path) -> Path:
+    """Create a valid 6502 assembly source file."""
+    content = """\
+; sample assembly program
+        .org $8000
+reset:  CLC
+        LDA #$05
+        STP
+        .org $FFFC
+        .word reset
+        .word reset
+"""
+    path = tmp_path / "program.s"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
 class TestCli:
     def test_build_only(self, sample_hex_file: Path, tmp_path: Path) -> None:
         out = tmp_path / "rom.bin"
@@ -144,6 +162,16 @@ class TestCli:
                 ):
                     main()
         mock_hw.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=True)
+
+    def test_build_asm_only(self, sample_asm_file: Path, tmp_path: Path) -> None:
+        out = tmp_path / "rom.bin"
+        with patch.object(sys, "argv", ["romulan", str(sample_asm_file), "--build", "-o", str(out)]):
+            main()
+        assert out.exists()
+        data = out.read_bytes()
+        assert len(data) == ROM_SIZE
+        assert data[0x0000] == 0x18  # CLC
+        assert data[0x7FFC:] == bytes([0x00, 0x80, 0x00, 0x80])
 
     def test_build_with_custom_output(self, sample_hex_file: Path, tmp_path: Path) -> None:
         out = tmp_path / "custom" / "rom.bin"
