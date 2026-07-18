@@ -221,6 +221,18 @@ class TestPeek:
         with pytest.raises(ValueError, match="count must be"):
             api.peek(offset=0, count=65)
 
+    def test_peek_live_mode_response_is_clear_error(self, mock_serial):
+        """Live-peek-only firmware's response is reported comprehensibly."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"peek","addr":"4000","data":"14"}',
+        )
+
+        api = _make_api(mock_serial)
+        with pytest.raises(HardwareAPIError, match="does not support ROM-image peek"):
+            api.peek(offset=0x7000, count=3)
+
 
 class TestSetClock:
     def test_set_clock_success(self, mock_serial):
@@ -791,6 +803,18 @@ class TestLivePeek:
         api = _make_api(mock_serial)
         with pytest.raises(HardwareAPIError, match="no bus cycle matched addr"):
             api.live_peek(0x4000)
+
+    def test_live_peek_rom_mode_response_is_clear_error(self, mock_serial):
+        """ROM-image-only firmware's response is reported comprehensibly."""
+        _enqueue_transaction_acks(mock_serial)
+        _enqueue_response(
+            mock_serial,
+            b'{"v":1,"ok":true,"cmd":"peek","offset":0,"count":1,"data":"18"}',
+        )
+
+        api = _make_api(mock_serial)
+        with pytest.raises(HardwareAPIError, match="does not support live peek"):
+            api.live_peek(0x800C)
 
     def test_live_peek_addr_out_of_range(self, mock_serial):
         api = _make_api(mock_serial)

@@ -398,6 +398,14 @@ class HardwareAPI:
         resp = self._exchange_json(
             build_request("peek", req_id=self._next_id(), addr=f"{addr:04X}")
         )
+        if "addr" not in resp:
+            # ROM-image-only firmware ignores "addr" and answers with a
+            # ROM-mode response (offset/count/data) — fail comprehensibly.
+            raise HardwareAPIError(
+                "firmware does not support live peek (--addr): got a ROM-image "
+                "peek response; reflash with live-peek-capable firmware, or "
+                "use peek --offset for ROM-image reads"
+            )
         try:
             result = parse_live_peek_response(resp)
         except ProtocolV1Error as exc:
@@ -500,6 +508,13 @@ class HardwareAPI:
                 count=count,
             )
         )
+        if "offset" not in resp:
+            # Live-peek-only firmware answers with addr/data instead.
+            raise HardwareAPIError(
+                "firmware does not support ROM-image peek (--offset): got a "
+                "live-peek response; reflash with ROM-image-peek firmware, or "
+                "use peek --addr for live bus reads"
+            )
         result = parse_peek_response(resp)
         self._emit({"type": "return", "method": "peek", "data": result.data.hex()})
         return result
