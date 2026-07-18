@@ -145,13 +145,13 @@ result = api.live_peek(0x4000)
 print(f"${result.addr:04X} = ${result.data:02X}")
 ```
 
-```{warning}
-Live mode requires live-peek-capable firmware (the LDA-stub variant). The
-ROM-image-only firmware does **not** reject live requests — it answers with a
-ROM-mode response instead. Romulan detects the mismatch and fails with
-`firmware does not support live peek (--addr)` (and vice versa for `--offset`
-against live-only firmware). Check your piclone build before relying on
-`--addr`.
+```{note}
+Current piclone firmware implements both modes in one `peek` command
+(dispatching on `addr` vs `offset`). Older ROM-image-only flashes do **not**
+reject live requests — they answer with a ROM-mode response instead. Romulan
+detects the mismatch and fails with `firmware does not support live peek
+(--addr)` (and vice versa for `--offset` against live-only firmware); reflash
+to get live mode.
 ```
 
 ## Important notes

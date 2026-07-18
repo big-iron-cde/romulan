@@ -160,7 +160,7 @@ Full firmware-side protocol reference: [Piclone Hardware API docs](https://big-i
 
 Captured cycles include `rw`: **0 = read**, **1 = write**. Piclone firmware on Pico 2 **infers** this from **A15** (ROM region = read, RAM region = write), not from a wired RWB sense pin—so STA/store cycles report `rw=1` and opcode fetches report `rw=0`.
 
-`hardware peek --addr` is a **live** bus/RAM read (the firmware runs a short LDA/STP stub and samples the matching cycle). It is not a ROM-image offset read — use `--offset` for that. The CPU is held in reset around the peek. Requires piclone wiring **RAM OE# = NOT(RWB)** and live-peek-capable firmware; the ROM-image firmware does not error on live requests, it answers with misleading ROM data instead.
+`hardware peek --addr` is a **live** bus/RAM read (the firmware runs a short LDA/STP stub and samples the matching cycle). It is not a ROM-image offset read — use `--offset` for that. The CPU is held in reset around the peek. Requires piclone wiring **RAM OE# = NOT(RWB)** and a current piclone flash (older ROM-image-only firmware answers live requests with a ROM-mode response, which romulan rejects with a clear error).
 
 #### Verbose example
 
