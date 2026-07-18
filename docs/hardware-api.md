@@ -67,8 +67,7 @@ All JSON payloads include `"v": 1`. An optional `"id"` field is echoed in respon
 | `reset` | Assert or release CPU reset |
 | `monitor` | Enable or disable the JSON bus monitor |
 | `request_addr` | Read current CPU address |
-| `peek` | Read bytes back from the loaded ROM image (`offset`/`count`) |
-| `peek` (live) | Live-peek one CPU bus/RAM byte (`addr`; LDA stub, briefly resets CPU) |
+| `peek` | Read ROM-image bytes (`offset`/`count`) or live-peek one CPU bus/RAM byte (`addr`) |
 | `read` | Capture bus cycles until STP or max cycles |
 | `clock` | Set PHI2 clock frequency (0.1–1000 Hz) |
 | `status` | Query firmware state (clock, reset, ROM, monitor, last bus sample) |
@@ -121,29 +120,36 @@ uv run romulan hardware status
 This prints the current PHI2 frequency, ROM/reset/monitor state, and the last
 bus sample (`last_addr`, `last_data`, `last_rw`).
 
-### Peek (ROM image)
+### Peek
 
-`peek(offset, count)` reads bytes back from the loaded ``rom_image[]`` in Pico
-SRAM — useful for verifying an upload landed at the expected offsets before
-releasing RESET. `count` is 1–64.
+One command, two modes, selected by which flags you pass:
+
+**ROM-image mode** (`--offset`, optional `--count` 1–64, default 16) reads bytes
+back from the loaded ``rom_image[]`` in Pico SRAM — useful for verifying an
+upload landed at the expected offsets before releasing RESET:
 
 ```bash
 uv run romulan hardware peek --offset 0x7000 --count 16
 ```
 
-### Live peek
+**Live mode** (`--addr`) asks the firmware to reset the CPU, run `LDA $addr` / `STP` from `$8000`, and return the data byte sampled on the matching address cycle. Use this to read live RAM (e.g. `$4000` after an STA), not a host ROM-image offset. The breadboard must wire **RAM OE# = NOT(RWB)**; with OE# tied high, peeks see open bus (often the address high byte).
 
-`live_peek(addr)` asks the firmware to reset the CPU, run `LDA $addr` / `STP` from `$8000`, and return the data byte sampled on the matching address cycle. Use this to read live RAM (e.g. `$4000` after an STA), not a host ROM-image offset. The breadboard must wire **RAM OE# = NOT(RWB)**; with OE# tied high, peeks see open bus (often the address high byte). Requires firmware with live-peek support.
+```bash
+uv run romulan hardware peek --addr 0x4000
+```
+
+The Python API exposes the two modes as separate methods, `api.peek(offset, count)` and `api.live_peek(addr)`:
 
 ```python
 result = api.live_peek(0x4000)
 print(f"${result.addr:04X} = ${result.data:02X}")
 ```
 
-Or from the CLI:
-
-```bash
-uv run romulan hardware live-peek --addr 0x4000
+```{warning}
+Live mode requires live-peek-capable firmware (the LDA-stub variant). The
+ROM-image-only firmware does **not** reject live requests — it silently
+answers with misleading ROM data. Check your piclone build before relying
+on `--addr`.
 ```
 
 ## Important notes

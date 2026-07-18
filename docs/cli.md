@@ -49,8 +49,7 @@ uv run romulan hardware <subcommand> [--port PORT] [--verbose]
 | `monitor` | `--enable` or `--disable` | Toggle JSON monitor output |
 | `reset` | `--assert` or `--release` | Hold or release CPU reset |
 | `request-addr` | — | Read the current CPU address |
-| `peek` | `--offset HEX --count N` | Read bytes back from the loaded ROM image |
-| `live-peek` | `--addr HEX` | Live-peek one bus/RAM byte (briefly resets CPU) |
+| `peek` | `--offset HEX [--count N]` or `--addr HEX` | Read ROM-image bytes (`--offset`) or live-peek one bus/RAM byte (`--addr`, briefly resets CPU) |
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -67,7 +66,7 @@ uv run romulan hardware reset --release
 uv run romulan hardware monitor --disable
 uv run romulan hardware request-addr
 uv run romulan hardware peek --offset 0x7000 --count 16
-uv run romulan hardware live-peek --addr 0x4000
+uv run romulan hardware peek --addr 0x4000
 ```
 
 ## Output format

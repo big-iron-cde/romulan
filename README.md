@@ -73,7 +73,7 @@ uv run romulan hardware request-addr
 uv run romulan hardware peek --offset 0x7000 --count 16
 
 # Live-peek a CPU bus/RAM byte (briefly resets the CPU)
-uv run romulan hardware live-peek --addr 0x4000
+uv run romulan hardware peek --addr 0x4000
 
 # Set the 65C02 clock speed
 uv run romulan hardware clock --hz 100
@@ -149,8 +149,7 @@ Romulan speaks the Piclone firmware's **v1 JSON protocol** over USB-CDC at 11520
 | `hardware monitor` | `--enable \| --disable [--port] [-v]` | Toggle JSON monitor output |
 | `hardware reset` | `--assert \| --release [--port] [-v]` | Hold or release the CPU reset line |
 | `hardware request-addr` | `[--port] [-v]` | Request the current CPU address |
-| `hardware peek` | `--offset <hex> [--count N] [--port] [-v]` | Read bytes back from the loaded ROM image |
-| `hardware live-peek` | `--addr <hex> [--port] [-v]` | Live-peek one CPU bus/RAM byte (briefly resets the CPU) |
+| `hardware peek` | `--offset <hex> [--count N]` or `--addr <hex> [--port] [-v]` | Read ROM-image bytes (`--offset`) or live-peek one CPU bus/RAM byte (`--addr`) |
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -161,7 +160,7 @@ Full firmware-side protocol reference: [Piclone Hardware API docs](https://big-i
 
 Captured cycles include `rw`: **0 = read**, **1 = write**. Piclone firmware on Pico 2 **infers** this from **A15** (ROM region = read, RAM region = write), not from a wired RWB sense pin—so STA/store cycles report `rw=1` and opcode fetches report `rw=0`.
 
-`hardware live-peek --addr` is a **live** bus/RAM read (the firmware runs a short LDA/STP stub and samples the matching cycle). It is not a ROM-image offset read — use `hardware peek --offset` for that. The CPU is held in reset around the peek. Requires piclone wiring **RAM OE# = NOT(RWB)**.
+`hardware peek --addr` is a **live** bus/RAM read (the firmware runs a short LDA/STP stub and samples the matching cycle). It is not a ROM-image offset read — use `--offset` for that. The CPU is held in reset around the peek. Requires piclone wiring **RAM OE# = NOT(RWB)** and live-peek-capable firmware; the ROM-image firmware does not error on live requests, it answers with misleading ROM data instead.
 
 #### Verbose example
 

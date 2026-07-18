@@ -508,8 +508,8 @@ class TestJsonOutput:
         ]
 
     @patch("romulan.main.HardwareAPI")
-    def test_live_peek_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
-        """hardware live-peek prints a result/live_peek object to stdout."""
+    def test_peek_live_mode_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --addr dispatches live mode and prints result/peek."""
         from romulan.protocol_v1 import PeekResult
 
         mock_api = self._mock_api()
@@ -519,7 +519,7 @@ class TestJsonOutput:
         with patch.object(
             sys,
             "argv",
-            ["romulan", "hardware", "live-peek", "--addr", "0x4000", "--port", "/dev/ttyFAKE"],
+            ["romulan", "hardware", "peek", "--addr", "0x4000", "--port", "/dev/ttyFAKE"],
         ):
             main()
 
@@ -529,7 +529,146 @@ class TestJsonOutput:
             {
                 "v": 1,
                 "type": "result",
-                "cmd": "live_peek",
-                "data": {"addr": "4000", "data": "14"},
+                "cmd": "peek",
+                "data": {"mode": "live", "addr": "4000", "data": "14"},
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_rom_mode_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --offset dispatches ROM mode and prints result/peek."""
+        from romulan.protocol_v1 import PeekResponse
+
+        mock_api = self._mock_api()
+        mock_api.peek.return_value = PeekResponse(offset=0x7000, count=3, data=b"\xA9\xAA\x05")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--offset", "0x7000", "--count", "3", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=0x7000, count=3)
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert objects == [
+            {
+                "v": 1,
+                "type": "result",
+                "cmd": "peek",
+                "data": {"mode": "rom", "offset": 0x7000, "count": 3, "data": "a9aa05"},
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_rom_mode_default_count(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek --offset without --count falls back to 16 bytes."""
+        from romulan.protocol_v1 import PeekResponse
+
+        mock_api = self._mock_api()
+        mock_api.peek.return_value = PeekResponse(offset=0x7000, count=16, data=b"\xEA" * 16)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--offset", "0x7000", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=0x7000, count=16)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_addr_with_and_without_0x_prefix(self, mock_hw_cls: MagicMock) -> None:
+        """--addr accepts 0x4000 and 4000 as the same hex value."""
+        from romulan.protocol_v1 import PeekResult
+
+        mock_api = self._mock_api()
+        mock_api.live_peek.return_value = PeekResult(addr=0x4000, data=0x14)
+        mock_hw_cls.return_value = mock_api
+
+        for addr_arg in ("0x4000", "4000"):
+            mock_api.live_peek.reset_mock()
+            with patch.object(
+                sys,
+                "argv",
+                ["romulan", "hardware", "peek", "--addr", addr_arg, "--port", "/dev/ttyFAKE"],
+            ):
+                main()
+            mock_api.live_peek.assert_called_once_with(0x4000)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_no_mode_is_bad_args(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek with neither --addr nor --offset is an error."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        errors = [o for o in self._parse_ndjson(capsys.readouterr().err) if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "Must specify --addr (live bus) or --offset (ROM image)",
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_addr_and_offset_conflict(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --addr --offset is an error."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--addr", "0x4000", "--offset", "0x7000", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        errors = [o for o in self._parse_ndjson(capsys.readouterr().err) if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "--addr and --offset are mutually exclusive",
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_count_with_addr_conflict(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --addr --count is an error (live mode is single-byte)."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--addr", "0x4000", "--count", "4", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        errors = [o for o in self._parse_ndjson(capsys.readouterr().err) if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "--count is only valid with --offset",
             }
         ]

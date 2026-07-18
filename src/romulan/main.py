@@ -194,34 +194,29 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     # --- peek ---
     peek_parser = sub.add_parser(
         "peek",
-        help="Read bytes back from the loaded ROM image",
+        help="Read bytes from the loaded ROM image (--offset/--count) "
+        "or live CPU bus/RAM (--addr)",
     )
     peek_parser.add_argument(
         "--offset",
         type=str,
-        default="0x7000",
-        help="ROM offset to read from (hex or decimal; default: 0x7000)",
+        default=None,
+        help="ROM-image offset to read from, hex or decimal (ROM mode)",
     )
     peek_parser.add_argument(
         "--count",
         type=int,
-        default=16,
-        help="Number of bytes to read, 1-64 (default: 16)",
+        default=None,
+        help="Number of bytes to read, 1-64 (ROM mode only; default: 16)",
+    )
+    peek_parser.add_argument(
+        "--addr",
+        type=_parse_cpu_addr,
+        default=None,
+        help="CPU address to live-peek as hex, e.g. 0x4000 (live mode; "
+        "resets CPU briefly)",
     )
     _add_common_args(peek_parser)
-
-    # --- live-peek ---
-    live_peek_parser = sub.add_parser(
-        "live-peek",
-        help="Live-peek one CPU bus/RAM byte (resets CPU briefly)",
-    )
-    live_peek_parser.add_argument(
-        "--addr",
-        required=True,
-        type=_parse_cpu_addr,
-        help="CPU address as hex (e.g. 0x4000 or 4000)",
-    )
-    _add_common_args(live_peek_parser)
 
     # --- clock ---
     clock_parser = sub.add_parser(
@@ -398,23 +393,41 @@ def _handle_hardware(args: argparse.Namespace) -> None:
                 emit_result("request_addr", {"addr": f"{addr:04X}"})
 
             elif cmd == "peek":
-                offset = _parse_int(args.offset)
-                result = api.peek(offset=offset, count=args.count)
-                emit_result(
-                    "peek",
-                    {
-                        "offset": result.offset,
-                        "count": result.count,
-                        "data": result.data.hex(),
-                    },
-                )
-
-            elif cmd == "live-peek":
-                result = api.live_peek(args.addr)
-                emit_result(
-                    "live_peek",
-                    {"addr": f"{result.addr:04X}", "data": f"{result.data:02X}"},
-                )
+                live = args.addr is not None
+                rom = args.offset is not None
+                if live and rom:
+                    emit_error("bad_args", "--addr and --offset are mutually exclusive")
+                    sys.exit(1)
+                if live and args.count is not None:
+                    emit_error("bad_args", "--count is only valid with --offset")
+                    sys.exit(1)
+                if not live and not rom:
+                    emit_error(
+                        "bad_args",
+                        "Must specify --addr (live bus) or --offset (ROM image)",
+                    )
+                    sys.exit(1)
+                if live:
+                    result = api.live_peek(args.addr)
+                    emit_result(
+                        "peek",
+                        {
+                            "mode": "live",
+                            "addr": f"{result.addr:04X}",
+                            "data": f"{result.data:02X}",
+                        },
+                    )
+                else:
+                    result = api.peek(offset=_parse_int(args.offset), count=args.count or 16)
+                    emit_result(
+                        "peek",
+                        {
+                            "mode": "rom",
+                            "offset": result.offset,
+                            "count": result.count,
+                            "data": result.data.hex(),
+                        },
+                    )
 
             elif cmd == "clock":
                 api.set_clock(hz=args.hz)
