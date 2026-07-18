@@ -15,6 +15,8 @@ uv run romulan [input] [--build] [--upload] [-o OUTPUT] [--port PORT]
 | `--upload` | Upload the ROM via the framed Hardware API | — |
 | `-o`, `--output` | Output ROM binary path | `bin/rom.bin` |
 | `--port` | Serial port (auto-detected if omitted) | auto-detect |
+| `--timeout` | Idle timeout in seconds with no framing progress (upload) | `30.0` |
+| `--verbose`, `-v` | Print Hardware API NDJSON traces during `--upload` | — |
 
 At least one of `--build` or `--upload` is required.
 
@@ -47,10 +49,13 @@ uv run romulan hardware <subcommand> [--port PORT] [--verbose]
 | `monitor` | `--enable` or `--disable` | Toggle JSON monitor output |
 | `reset` | `--assert` or `--release` | Hold or release CPU reset |
 | `request-addr` | — | Read the current CPU address |
+| `peek` | `--offset HEX --count N` | Read bytes back from the loaded ROM image |
+| `live-peek` | `--addr HEX` | Live-peek one bus/RAM byte (briefly resets CPU) |
 
-| Flag | Description |
-|------|-------------|
-| `--verbose`, `-v` | Print every JSON message sent and received |
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--timeout` | Idle timeout in seconds with no framing/capture progress | `30.0` |
+| `--verbose`, `-v` | Print every JSON message sent and received | — |
 
 ### Examples
 
@@ -61,6 +66,8 @@ uv run romulan hardware reset --assert
 uv run romulan hardware reset --release
 uv run romulan hardware monitor --disable
 uv run romulan hardware request-addr
+uv run romulan hardware peek --offset 0x7000 --count 16
+uv run romulan hardware live-peek --addr 0x4000
 ```
 
 ## Output format

@@ -67,6 +67,8 @@ All JSON payloads include `"v": 1`. An optional `"id"` field is echoed in respon
 | `reset` | Assert or release CPU reset |
 | `monitor` | Enable or disable the JSON bus monitor |
 | `request_addr` | Read current CPU address |
+| `peek` | Read bytes back from the loaded ROM image (`offset`/`count`) |
+| `peek` (live) | Live-peek one CPU bus/RAM byte (`addr`; LDA stub, briefly resets CPU) |
 | `read` | Capture bus cycles until STP or max cycles |
 | `clock` | Set PHI2 clock frequency (0.1–1000 Hz) |
 | `status` | Query firmware state (clock, reset, ROM, monitor, last bus sample) |
@@ -119,11 +121,37 @@ uv run romulan hardware status
 This prints the current PHI2 frequency, ROM/reset/monitor state, and the last
 bus sample (`last_addr`, `last_data`, `last_rw`).
 
+### Peek (ROM image)
+
+`peek(offset, count)` reads bytes back from the loaded ``rom_image[]`` in Pico
+SRAM — useful for verifying an upload landed at the expected offsets before
+releasing RESET. `count` is 1–64.
+
+```bash
+uv run romulan hardware peek --offset 0x7000 --count 16
+```
+
+### Live peek
+
+`live_peek(addr)` asks the firmware to reset the CPU, run `LDA $addr` / `STP` from `$8000`, and return the data byte sampled on the matching address cycle. Use this to read live RAM (e.g. `$4000` after an STA), not a host ROM-image offset. The breadboard must wire **RAM OE# = NOT(RWB)**; with OE# tied high, peeks see open bus (often the address high byte). Requires firmware with live-peek support.
+
+```python
+result = api.live_peek(0x4000)
+print(f"${result.addr:04X} = ${result.data:02X}")
+```
+
+Or from the CLI:
+
+```bash
+uv run romulan hardware live-peek --addr 0x4000
+```
+
 ## Important notes
 
 - Do not open a plain serial monitor on the port while using the framed protocol — unstructured output corrupts framing.
 - Disable the JSON monitor before scripted upload or capture (the client methods do this automatically).
 - If unstructured lines (monitor output) do precede a response frame, the client resynchronizes by taking the text after the last newline, from the first `{` — this skips both legacy ASCII monitor rows and newline-terminated JSON monitor lines. With `--verbose` this is reported as a `{"v":1,"type":"event","event":"resync","data":{"skipped_bytes":N}}` event. Bytes interleaved *inside* a payload still fail parsing, so keeping the monitor off during scripted sessions remains the recommendation.
+- `live_peek` briefly asserts reset around the stub program; do not rely on CPU state surviving a live peek.
 - The ROM image in Pico SRAM is lost on power cycle — re-upload after each reboot.
 
 ## Python API reference

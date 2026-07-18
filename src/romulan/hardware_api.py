@@ -5,8 +5,8 @@ framed JSON protocol implemented by the Pico firmware. It handles the
 low-level ENQ/STX/ACK/EOT framing, encodes commands built by
 :mod:`romulan.protocol_v1`, and exposes friendly methods for the common
 operations: querying the current CPU address, asserting/releasing reset,
-toggling the JSON monitor, reading status, uploading a ROM image, and
-capturing bus cycles.
+toggling the JSON monitor, reading status, uploading a ROM image,
+live-peeking a CPU bus address, and capturing bus cycles.
 
 Opening a :class:`HardwareAPI` immediately opens the underlying serial port.
 The class supports the context-manager protocol so the port is always closed::
@@ -35,6 +35,7 @@ from .protocol_v1 import (
     CycleEvent,
     DriveResponse,
     PeekResponse,
+    PeekResult,
     ProtocolV1Error,
     ReadResult,
     StatusResponse,
@@ -43,6 +44,7 @@ from .protocol_v1 import (
     parse_done_event,
     parse_drive_response,
     parse_frame,
+    parse_live_peek_response,
     parse_peek_response,
     parse_status,
     parse_upload_response,
@@ -54,6 +56,9 @@ STX = 0x02
 ACK = 0x06
 EOT = 0x04
 NACK = 0x15
+
+# Short pyserial poll interval — idle/activity timeouts use HardwareAPI.timeout separately.
+SERIAL_POLL_S = 0.05
 
 
 class HardwareAPIError(Exception):
@@ -115,7 +120,7 @@ class HardwareAPI:
     Attributes:
         port: The serial device path the client is connected to.
         baudrate: The serial baud rate in use.
-        timeout: Default per-read timeout in seconds.
+        timeout: Idle / activity timeout in seconds (no useful framing progress).
         verbose: When ``True``, protocol traffic is logged to stderr.
     """
 
@@ -128,7 +133,9 @@ class HardwareAPI:
         Args:
             port: Serial device path (e.g. ``/dev/ttyACM0``).
             baudrate: Serial baud rate. Defaults to ``115200``.
-            timeout: Default read timeout in seconds. Defaults to ``30.0``.
+            timeout: Idle timeout in seconds with no framing progress. Defaults
+                to ``30.0``. Does **not** set the low-level pyserial poll block;
+                that uses a short :data:`SERIAL_POLL_S` so waits stay responsive.
             verbose: If ``True``, log SEND/RECV protocol traffic to stderr.
         """
         self.port = port
@@ -143,7 +150,7 @@ class HardwareAPI:
         self._ser = serial.Serial(
             self.port,
             self.baudrate,
-            timeout=self.timeout,
+            timeout=SERIAL_POLL_S,
         )
         time.sleep(0.3)
         if self._ser:
@@ -279,23 +286,25 @@ class HardwareAPI:
         self._emit({"type": "error", "error": "timeout", "detail": "timed out waiting for EOT in response payload"})
         raise TimeoutError("timed out waiting for EOT in response payload")
 
-    def _send_frame_host(self, payload: bytes) -> None:
+    def _send_frame_host(self, payload: bytes, timeout: float | None = None) -> None:
+        wait = self.timeout if timeout is None else timeout
         self._emit(self._payload_event("send", payload))
         self._write_byte(ENQ)
         self._write_byte(STX)
-        if self._sync_to_byte({ACK, NACK}) != ACK:
+        if self._sync_to_byte({ACK, NACK}, timeout=wait) != ACK:
             self._emit({"type": "error", "error": "nack", "detail": "Pico responded with NACK"})
             raise HardwareAPIError("Pico responded with NACK")
         self.ser.write(payload)
         self._write_byte(EOT)
-        if self._sync_to_byte({ACK, NACK}) != ACK:
+        if self._sync_to_byte({ACK, NACK}, timeout=wait) != ACK:
             self._emit({"type": "error", "error": "nack", "detail": "Pico responded with NACK"})
             raise HardwareAPIError("Pico responded with NACK")
 
-    def _send_frame(self, payload: bytes) -> bytes:
-        self._send_frame_host(payload)
-        self._sync_to_byte({ENQ})
-        raw = self._read_frame_payload()
+    def _send_frame(self, payload: bytes, timeout: float | None = None) -> bytes:
+        wait = self.timeout if timeout is None else timeout
+        self._send_frame_host(payload, timeout=wait)
+        self._sync_to_byte({ENQ}, timeout=wait)
+        raw = self._read_frame_payload(timeout=wait)
         self._emit(self._payload_event("recv", raw))
         return raw
 
@@ -317,9 +326,12 @@ class HardwareAPI:
             )
         return msg
 
-    def _exchange_json(self, command: dict[str, Any]) -> dict[str, Any]:
+    def _exchange_json(
+        self, command: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        wait = self.timeout if timeout is None else timeout
         payload = json.dumps(command, separators=(",", ":")).encode("utf-8")
-        raw = self._send_frame(payload)
+        raw = self._send_frame(payload, timeout=wait)
         return self._parse_response(raw)
 
     @staticmethod
@@ -358,6 +370,46 @@ class HardwareAPI:
         addr_int = self._parse_addr(addr)
         self._emit({"type": "ret", "method": "request_addr", "result": addr_int})
         return addr_int
+
+    def live_peek(self, addr: int) -> PeekResult:
+        """Live-peek one byte by running a short LDA absolute / STP stub on the CPU.
+
+        The firmware briefly resets the 65C02, patches ``LDA $addr`` / ``STP`` at
+        ``$8000``, samples the data byte on the bus cycle whose address matches
+        ``addr``, then restores the previous ROM bytes. This reads live RAM (or
+        ROM) contents — not a host-side ROM-image offset (see :meth:`peek`
+        for that). Requires firmware with live-peek support.
+
+        Args:
+            addr: CPU address to read (``0``–``0xFFFF``).
+
+        Returns:
+            A :class:`~romulan.protocol_v1.PeekResult` with ``addr`` and ``data``.
+
+        Raises:
+            ValueError: If ``addr`` is outside ``0``–``0xFFFF``.
+            HardwareAPIError: If the firmware reports an error (timeout, no
+                matching cycle, busy, etc.).
+            TimeoutError: If the Pico does not respond in time.
+        """
+        if not 0 <= addr <= 0xFFFF:
+            raise ValueError(f"addr must be 0..0xFFFF, got {addr}")
+        self._emit({"type": "call", "method": "live_peek", "addr": addr})
+        resp = self._exchange_json(
+            build_request("peek", req_id=self._next_id(), addr=f"{addr:04X}")
+        )
+        try:
+            result = parse_live_peek_response(resp)
+        except ProtocolV1Error as exc:
+            raise HardwareAPIError(str(exc)) from exc
+        self._emit(
+            {
+                "type": "ret",
+                "method": "live_peek",
+                "result": {"addr": result.addr, "data": result.data},
+            }
+        )
+        return result
 
     def reset(self, assert_reset: bool) -> None:
         """Assert or release the 65C02 RESET line.
@@ -607,8 +659,9 @@ class HardwareAPI:
         Args:
             max_cycles: Maximum number of bus cycles to capture before the
                 firmware stops. Defaults to ``10000``.
-            frame_timeout: Overall capture timeout in seconds while polling
-                for cycle/done events. Defaults to :attr:`timeout`.
+            frame_timeout: Idle timeout in seconds with no new cycle/done event.
+                ``none`` polls do not extend the deadline. Defaults to
+                :attr:`timeout`.
             on_cycle: Optional callback invoked for each captured cycle (e.g.
                 for live CLI output).
             batch_size: Number of cycles to request per ``read_event`` poll.
@@ -622,7 +675,7 @@ class HardwareAPI:
         Raises:
             HardwareAPIError: If the read is rejected or an unexpected frame
                 arrives.
-            TimeoutError: If the capture does not complete in time.
+            TimeoutError: If no cycle/done arrives within the idle timeout.
         """
         resolved_timeout = self.timeout if frame_timeout is None else frame_timeout
         emit_payload: dict[str, Any] = {"max_cycles": max_cycles, "batch_size": batch_size}
@@ -660,13 +713,22 @@ class HardwareAPI:
         poll_idle_s = 0.005
 
         try:
-            while time.time() < deadline:
+            while True:
+                now = time.time()
+                if now >= deadline:
+                    raise TimeoutError(
+                        f"timed out after {resolved_timeout:.1f}s with no cycle/done "
+                        f"(got {len(cycles)} cycles). "
+                        "Is PHI2 running? Try --timeout 60."
+                    )
+                remaining = max(SERIAL_POLL_S, deadline - now)
                 msg = self._exchange_json(
                     build_request(
                         "read_event",
                         req_id=self._next_id(),
                         batch_size=batch_size,
-                    )
+                    ),
+                    timeout=remaining,
                 )
                 event = msg.get("event")
                 if msg.get("type") == "event" and event == "cycles":
@@ -675,6 +737,7 @@ class HardwareAPI:
                         if on_cycle is not None:
                             on_cycle(cycle)
                     cycles.extend(batch)
+                    # Progress resets idle deadline; empty polls do not.
                     deadline = time.time() + resolved_timeout
                 elif msg.get("type") == "event" and event == "done":
                     done = parse_done_event(msg)
@@ -689,11 +752,6 @@ class HardwareAPI:
                     time.sleep(poll_idle_s)
                 else:
                     raise HardwareAPIError(f"unexpected frame during read: {msg}")
-            else:
-                raise TimeoutError(
-                    f"timed out after read ack (got {len(cycles)} cycles). "
-                    "No STP/done yet — is PHI2 running? Try --timeout 60."
-                )
         except TimeoutError:
             raise
 

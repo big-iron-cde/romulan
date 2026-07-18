@@ -71,6 +71,18 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Serial port for the Pico (auto-detected if omitted)",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Idle timeout in seconds with no framing progress (default: 30.0)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print hardware protocol messages (SEND/RECV trace) during --upload",
+    )
     return parser
 
 
@@ -78,7 +90,7 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     """Create a dedicated parser for the ``hardware`` sub-command.
 
     The ``hardware`` command has its own subcommands (``upload``, ``capture``,
-    ``monitor``, ``reset``, ``request-addr``), each sharing the common
+    ``monitor``, ``reset``, ``request-addr``, ``peek``), each sharing the common
     ``--port`` and ``--verbose`` options.
 
     Returns:
@@ -100,7 +112,7 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
             "--timeout",
             type=float,
             default=30.0,
-            help="Serial/frame timeout in seconds (default: 30.0)",
+            help="Idle timeout in seconds with no framing/capture progress (default: 30.0)",
         )
         p.add_argument(
             "--verbose",
@@ -198,6 +210,19 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     _add_common_args(peek_parser)
 
+    # --- live-peek ---
+    live_peek_parser = sub.add_parser(
+        "live-peek",
+        help="Live-peek one CPU bus/RAM byte (resets CPU briefly)",
+    )
+    live_peek_parser.add_argument(
+        "--addr",
+        required=True,
+        type=_parse_cpu_addr,
+        help="CPU address as hex (e.g. 0x4000 or 4000)",
+    )
+    _add_common_args(live_peek_parser)
+
     # --- clock ---
     clock_parser = sub.add_parser(
         "clock",
@@ -256,6 +281,22 @@ def _parse_int(value: str) -> int:
         return int(value, 0)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from exc
+
+
+def _parse_cpu_addr(text: str) -> int:
+    """Parse a CPU address from CLI hex (``0x4000``, ``4000``, ``0X4000``)."""
+    raw = text.strip()
+    try:
+        value = int(raw, 16)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid address {text!r}; use hex like 0x4000 or 4000"
+        ) from exc
+    if not 0 <= value <= 0xFFFF:
+        raise argparse.ArgumentTypeError(
+            f"address out of range: {text!r} (must be 0000–FFFF)"
+        )
+    return value
 
 
 def _resolve_port(port: str | None) -> str:
@@ -368,6 +409,13 @@ def _handle_hardware(args: argparse.Namespace) -> None:
                     },
                 )
 
+            elif cmd == "live-peek":
+                result = api.live_peek(args.addr)
+                emit_result(
+                    "live_peek",
+                    {"addr": f"{result.addr:04X}", "data": f"{result.data:02X}"},
+                )
+
             elif cmd == "clock":
                 api.set_clock(hz=args.hz)
                 emit_result("clock", {"hz": args.hz})
@@ -388,6 +436,10 @@ def _handle_hardware(args: argparse.Namespace) -> None:
             elif cmd == "status":
                 st = api.status()
                 emit_result("status", asdict(st))
+
+            elif cmd == "peek":
+                result = api.peek(args.addr)
+                print(f"${result.addr:04X} = ${result.data:02X}")
 
     except (HardwareAPIError, TimeoutError) as exc:
         emit_error("hardware_api", f"Hardware API failed: {exc}")
@@ -467,7 +519,9 @@ def main() -> None:
             )
 
         try:
-            with HardwareAPI(port) as api:
+            with HardwareAPI(
+                port, timeout=args.timeout, verbose=args.verbose
+            ) as api:
                 result = api.upload_rom(args.output.read_bytes())
             result["note"] = (
                 "CPU held in reset — run `romulan hardware capture` "

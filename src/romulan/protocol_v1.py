@@ -97,6 +97,19 @@ class ReadResult:
 
 
 @dataclass
+class PeekResult:
+    """Result of a live bus/RAM peek (CPU read cycle, not ROM-image offset).
+
+    Attributes:
+        addr: CPU address that was peeked (0–0xFFFF).
+        data: Data byte sampled on the matching bus cycle.
+    """
+
+    addr: int
+    data: int
+
+
+@dataclass
 class StatusResponse:
     """Snapshot of firmware/hardware state returned by the ``status`` command.
 
@@ -427,6 +440,46 @@ def parse_drive_response(msg: dict[str, Any]) -> DriveResponse:
     return DriveResponse(
         enabled=bool(msg.get("enabled")),
         value=str(msg.get("value", "00")),
+    )
+
+
+def _parse_hex_field(value: Any, *, name: str, max_value: int) -> int:
+    """Parse an int or hex string field into an integer in ``0..max_value``."""
+    if value is None:
+        raise ProtocolV1Error(f"missing {name}")
+    if isinstance(value, int):
+        parsed = value
+    else:
+        text = str(value).strip()
+        try:
+            parsed = int(text, 16)
+        except ValueError as exc:
+            raise ProtocolV1Error(f"invalid {name}: {value!r}") from exc
+    if not 0 <= parsed <= max_value:
+        raise ProtocolV1Error(f"{name} out of range: {parsed}")
+    return parsed
+
+
+def parse_live_peek_response(msg: dict[str, Any]) -> PeekResult:
+    """Parse a live ``peek`` command response into a :class:`PeekResult`.
+
+    Distinct from any ROM-image offset peek: fields are CPU ``addr`` and
+    sampled bus ``data`` (single byte).
+
+    Args:
+        msg: A parsed frame expected to be a successful ``peek`` response.
+
+    Returns:
+        The decoded address and data byte.
+
+    Raises:
+        ProtocolV1Error: If the frame reports an error, the version is
+            unsupported, or required fields are missing/invalid.
+    """
+    parse_command_response(msg)
+    return PeekResult(
+        addr=_parse_hex_field(msg.get("addr"), name="addr", max_value=0xFFFF),
+        data=_parse_hex_field(msg.get("data"), name="data", max_value=0xFF),
     )
 
 
