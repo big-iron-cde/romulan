@@ -67,6 +67,12 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Serial port for the Pico (auto-detected if omitted)",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Emit structured build progress to stderr as NDJSON",
+    )
     return parser
 
 
@@ -323,7 +329,7 @@ def main() -> None:
             sys.exit(1)
 
         try:
-            build_rom(args.input, args.output)
+            build_rom(args.input, args.output, verbose=args.verbose)
         except ValueError as exc:
             print(f"ERROR: Build failed: {exc}", file=sys.stderr)
             sys.exit(1)
