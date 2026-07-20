@@ -75,8 +75,7 @@ jobs:
 
     - name: Build add.txt
       run: |
-        mkdir -p bin
-        uv run romulan add.txt --build -o bin/rom.bin
+        uv run romulan tests/add.txt --build -o bin/add.bin
 
     - name: Test hardware API commands on add.txt
       run: |
@@ -85,7 +84,7 @@ jobs:
         sleep 2
 
         echo "=== hardware upload ==="
-        uv run romulan hardware upload bin/rom.bin --verbose 
+        uv run romulan hardware upload bin/add.bin --verbose 
         sleep 2
 
         echo "=== hardware reset --release ==="
