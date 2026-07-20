@@ -1,6 +1,6 @@
 # Romulan
 
-> Host client for the [**Piclone**](https://github.com/big-iron-cde/piclone) 65C02 system — assembles ROM images from annotated hex dumps and talks to the Pico over the framed v1 JSON Hardware API (USB serial).
+> Host client for the [**Piclone**](https://github.com/big-iron-cde/piclone) 65C02 system — builds ROM images from annotated hex dumps or 6502 assembly and talks to the Pico over the framed v1 JSON Hardware API (USB serial).
 
 [![Docs](https://github.com/big-iron-cde/piclone/actions/workflows/docs.yml/badge.svg)](https://github.com/big-iron-cde/romulan)
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://big-iron-cde.github.io/romulan/)
@@ -11,6 +11,7 @@
 ## Features
 
 - **Parse annotated hex dumps** — address, byte, and optional comment per line
+- **Assemble 6502/65C02 source** — mnemonics, labels, `.org`, `.byte`/`.word`; input format auto-detected
 - **Build 32 KB ROM images** — auto-fill with NOPs (`$EA`), validate reset/IRQ vectors
 - **Framed Hardware API (v1)** — JSON over ENQ/STX/ACK/EOT for scripted control and ROM upload
 - **Verbose protocol traces** — `-v` / `--verbose` on `--upload` and on `hardware` subcommands (NDJSON SEND/RECV)
@@ -36,11 +37,18 @@ Build a ROM from an annotated hex file:
 uv run romulan demo.txt --build
 ```
 
+Or from 6502 assembly (`demo.s` is the assembly counterpart of `demo.txt`; the input format is auto-detected):
+
+```bash
+uv run romulan demo.s --build
+```
+
 Build and upload in one step (framed Hardware API):
 
 ```bash
 uv run romulan demo.txt --build --upload
-uv run romulan demo.txt --build --upload -v   # NDJSON protocol trace during upload
+uv run romulan demo.s --build --upload
+uv run romulan demo.s --build --upload -v   # NDJSON protocol trace during upload
 ```
 
 Upload an existing binary (optional `-v` / `--timeout`):
@@ -99,7 +107,11 @@ with HardwareAPI("/dev/ttyACM0") as api:
     print(capture.reason, len(capture.cycles))
 ```
 
-### Annotated hex format
+### Input formats
+
+`--build` accepts two source formats, auto-detected from the file contents (the extension doesn't matter). Either way, the result is a 32 KB ROM image and the **vectors are required** — the builder rejects images without them.
+
+#### Annotated hex format
 
 Each line is `address`, `byte`, and an optional `@ comment`:
 
@@ -121,13 +133,37 @@ Each line is `address`, `byte`, and an optional `@ comment`:
 - **Comments** are optional — everything after `@` is ignored
 - **Vectors** at `0x7FFC`–`0x7FFF` are **required** — the builder will reject images without them
 
+#### 6502 assembly
+
+A built-in two-pass assembler covers the official NMOS 6502 mnemonics plus the W65C02 additions used by the course (`STP`, `WAI`, `BRA`, `PHX`/`PHY`/`PLX`/`PLY`, `STZ`, `TRB`/`TSB`, accumulator `INC`/`DEC`, `(zp)` indirect). Comments start with `;`:
+
+```asm
+        .org $8000          ; CPU address (omit to start at $8000)
+
+reset:  CLC                 ; labels end with ':'
+        LDA #$05            ; immediate
+        STA $4000           ; absolute ($10 would be zero page)
+        BNE reset           ; relative branches
+        STP
+
+        .org $FFFC
+        .word reset         ; reset vector (little-endian)
+        .word reset         ; IRQ/BRK vector
+```
+
+- Numbers: `$FF`, `0xFF`, or decimal
+- Directives: `.org`, `.byte v1, v2, …`, `.word v1, v2, …`
+- Addressing modes: implied, accumulator, immediate, zero page, absolute, `,X`/`,Y` indexed, `JMP ($1234)`, `($10,X)`, `($10),Y`, `($10)`, relative
+- A numeric operand under `$100` uses the zero-page form when the mnemonic has one (so `JMP $0000` still encodes as `4C 00 00`); label operands are always absolute
+- All emitted bytes must land in the ROM region `$8000`–`$FFFF`; operand *values* are unrestricted
+
 ## CLI Reference
 
 ### Standard CLI
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `input` | Path to the annotated hex dump file (required with `--build`) | — |
+| `input` | Path to the input file: annotated hex dump or 6502 assembly (required with `--build`) | — |
 | `--build` | Build a `.bin` ROM image from the input file | — |
 | `--upload` | Upload the ROM image to the Pico (framed Hardware API) | — |
 | `-o, --output` | Output ROM binary path | `bin/rom.bin` |

@@ -48,7 +48,8 @@ def create_parser() -> argparse.ArgumentParser:
         "input",
         nargs="?",
         type=Path,
-        help="Path to the annotated hex dump input file (required with --build)",
+        help="Path to the input file: annotated hex dump or 6502 assembly "
+        "(format auto-detected; required with --build)",
     )
     parser.add_argument(
         "--build",

@@ -10,7 +10,7 @@ uv run romulan [input] [--build] [--upload] [-o OUTPUT] [--port PORT]
 
 | Argument / Flag | Description | Default |
 |-----------------|-------------|---------|
-| `input` | Annotated hex dump file (required with `--build`) | — |
+| `input` | Annotated hex dump or 6502 assembly file (format auto-detected; required with `--build`) | — |
 | `--build` | Build a `.bin` ROM image from the input file | — |
 | `--upload` | Upload the ROM via the framed Hardware API | — |
 | `-o`, `--output` | Output ROM binary path | `bin/rom.bin` |
@@ -25,6 +25,9 @@ At least one of `--build` or `--upload` is required.
 ```bash
 # Build only
 uv run romulan program.txt --build
+
+# Build from 6502 assembly
+uv run romulan program.s --build
 
 # Build and upload
 uv run romulan program.txt --build --upload
