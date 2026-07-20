@@ -2,6 +2,14 @@
 
 Auto-generated from module docstrings.
 
+## Assembler
+
+```{eval-rst}
+.. automodule:: romulan.assemble
+   :members:
+   :show-inheritance:
+```
+
 ## ROM builder
 
 ```{eval-rst}

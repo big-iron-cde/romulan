@@ -88,6 +88,24 @@ class TestBuildRom:
             build_rom(path, out)
 
 
+@pytest.fixture
+def sample_asm_file(tmp_path: Path) -> Path:
+    """Create a valid 6502 assembly source file."""
+    content = """\
+; sample assembly program
+        .org $8000
+reset:  CLC
+        LDA #$05
+        STP
+        .org $FFFC
+        .word reset
+        .word reset
+"""
+    path = tmp_path / "program.s"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
 class TestCli:
     def test_build_only(self, sample_hex_file: Path, tmp_path: Path) -> None:
         out = tmp_path / "rom.bin"
@@ -139,9 +157,39 @@ class TestCli:
                 ):
                     main()
         assert out.exists()
-        mock_hw.assert_called_once_with("/dev/ttyFAKE")
+        mock_hw.assert_called_once_with("/dev/ttyFAKE", timeout=30.0, verbose=False)
         mock_api.upload_rom.assert_called_once()
         assert len(mock_api.upload_rom.call_args[0][0]) == ROM_SIZE
+
+    def test_upload_verbose_flag(self, sample_hex_file: Path, tmp_path: Path) -> None:
+        out = tmp_path / "rom.bin"
+        build_rom(sample_hex_file, out)
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.upload_rom.return_value = {
+            "ok": True,
+            "bytes": ROM_SIZE,
+            "reset_vector": "8000",
+            "expected": ROM_SIZE,
+        }
+        with patch("romulan.main.HardwareAPI", return_value=mock_api) as mock_hw:
+            with patch("romulan.main.find_pico_port", return_value="/dev/ttyFAKE"):
+                with patch.object(
+                    sys, "argv", ["romulan", "--upload", "-o", str(out), "-v", "--timeout", "45"]
+                ):
+                    main()
+        mock_hw.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=True)
+
+    def test_build_asm_only(self, sample_asm_file: Path, tmp_path: Path) -> None:
+        out = tmp_path / "rom.bin"
+        with patch.object(sys, "argv", ["romulan", str(sample_asm_file), "--build", "-o", str(out)]):
+            main()
+        assert out.exists()
+        data = out.read_bytes()
+        assert len(data) == ROM_SIZE
+        assert data[0x0000] == 0x18  # CLC
+        assert data[0x7FFC:] == bytes([0x00, 0x80, 0x00, 0x80])
 
     def test_build_with_custom_output(self, sample_hex_file: Path, tmp_path: Path) -> None:
         out = tmp_path / "custom" / "rom.bin"
@@ -168,7 +216,7 @@ class TestCli:
             with patch("romulan.main.find_pico_port", return_value="/dev/ttyFAKE"):
                 with patch.object(sys, "argv", ["romulan", "--upload", "-o", str(out)]):
                     main()
-        mock_hw.assert_called_once_with("/dev/ttyFAKE")
+        mock_hw.assert_called_once_with("/dev/ttyFAKE", timeout=30.0, verbose=False)
         mock_api.upload_rom.assert_called_once_with(out.read_bytes())
 
     def test_neither_flag(self) -> None:
@@ -269,3 +317,404 @@ class TestHardwareVerbose:
             main()
 
         mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=False)
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_hex_offset(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek parses a hex offset and prints the returned bytes."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.peek.return_value = MagicMock(offset=0x7000, count=3, data=b"\xA9\xAA\x05")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE", "--offset", "0x7000", "--count", "3"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=0x7000, count=3)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_decimal_offset(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek parses a decimal offset."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.peek.return_value = MagicMock(offset=28672, count=16, data=b"\xEA" * 16)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE", "--offset", "28672"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=28672, count=16)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_clock(self, mock_hw_cls: MagicMock) -> None:
+        """hardware clock calls set_clock with the requested Hz."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "clock", "--port", "/dev/ttyFAKE", "--hz", "100"],
+        ):
+            main()
+
+        mock_api.set_clock.assert_called_once_with(hz=100.0)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_status(self, mock_hw_cls: MagicMock) -> None:
+        """hardware status prints the firmware status snapshot."""
+        from romulan.protocol_v1 import StatusResponse
+
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.status.return_value = StatusResponse(
+            phi2_hz=1000.0,
+            rom_active=True,
+            reset_asserted=False,
+            read_active=False,
+            monitor_enabled=False,
+            upload_active=False,
+            last_addr="F000",
+            last_data="4C",
+            last_rw=0,
+            resb=1,
+            rwb=0,
+            a15=1,
+            phi2=0,
+        )
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "status", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.status.assert_called_once_with()
+
+    @patch("romulan.main.HardwareAPI")
+    def test_drive_enable(self, mock_hw_cls: MagicMock) -> None:
+        """hardware drive --value calls api.drive with the byte."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.drive.return_value = MagicMock(enabled=True, value="A5")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "drive", "--port", "/dev/ttyFAKE", "--value", "A5"],
+        ):
+            main()
+
+        mock_api.drive.assert_called_once_with("A5")
+
+    @patch("romulan.main.HardwareAPI")
+    def test_drive_disable(self, mock_hw_cls: MagicMock) -> None:
+        """hardware drive --disable calls api.drive(None)."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.drive.return_value = MagicMock(enabled=False, value="00")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "drive", "--port", "/dev/ttyFAKE", "--disable"],
+        ):
+            main()
+
+        mock_api.drive.assert_called_once_with(None)
+
+
+class TestJsonOutput:
+    """The CLI emits the v1 JSON output schema on stdout/stderr."""
+
+    @staticmethod
+    def _mock_api() -> MagicMock:
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        return mock_api
+
+    @staticmethod
+    def _parse_ndjson(text: str) -> list:
+        import json
+
+        return [json.loads(line) for line in text.strip().splitlines() if line.strip()]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_reset_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware reset --assert prints a result/reset object to stdout."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "reset", "--assert", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert objects == [
+            {"v": 1, "type": "result", "cmd": "reset", "data": {"asserted": True}}
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_reset_flag_conflict_error_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """Conflicting reset flags print an error/bad_args object to stderr."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "reset", "--assert", "--release", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        objects = self._parse_ndjson(capsys.readouterr().err)
+        errors = [o for o in objects if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "Cannot specify both --assert and --release",
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_status_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware status prints the full snapshot as result/status."""
+        from romulan.protocol_v1 import StatusResponse
+
+        mock_api = self._mock_api()
+        mock_api.status.return_value = StatusResponse(
+            phi2_hz=1000.0,
+            rom_active=True,
+            reset_asserted=False,
+            last_addr="F000",
+            read_active=False,
+            monitor_enabled=False,
+        )
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "status", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert len(objects) == 1
+        obj = objects[0]
+        assert obj["v"] == 1
+        assert obj["type"] == "result"
+        assert obj["cmd"] == "status"
+        assert obj["data"]["phi2_hz"] == 1000.0
+        assert obj["data"]["rom_active"] is True
+        assert obj["data"]["last_addr"] == "F000"
+
+    @patch("romulan.main.HardwareAPI")
+    def test_request_addr_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware request-addr prints result/request_addr with a hex address."""
+        mock_api = self._mock_api()
+        mock_api.request_addr.return_value = 0x8000
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "request-addr", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert objects == [
+            {"v": 1, "type": "result", "cmd": "request_addr", "data": {"addr": "8000"}}
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_live_mode_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --addr dispatches live mode and prints result/peek."""
+        from romulan.protocol_v1 import PeekResult
+
+        mock_api = self._mock_api()
+        mock_api.live_peek.return_value = PeekResult(addr=0x4000, data=0x14)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--addr", "0x4000", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.live_peek.assert_called_once_with(0x4000)
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert objects == [
+            {
+                "v": 1,
+                "type": "result",
+                "cmd": "peek",
+                "data": {"mode": "live", "addr": "4000", "data": "14"},
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_rom_mode_result_envelope(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --offset dispatches ROM mode and prints result/peek."""
+        from romulan.protocol_v1 import PeekResponse
+
+        mock_api = self._mock_api()
+        mock_api.peek.return_value = PeekResponse(offset=0x7000, count=3, data=b"\xA9\xAA\x05")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--offset", "0x7000", "--count", "3", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=0x7000, count=3)
+        objects = self._parse_ndjson(capsys.readouterr().out)
+        assert objects == [
+            {
+                "v": 1,
+                "type": "result",
+                "cmd": "peek",
+                "data": {"mode": "rom", "offset": 0x7000, "count": 3, "data": "a9aa05"},
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_rom_mode_default_count(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek --offset without --count falls back to 16 bytes."""
+        from romulan.protocol_v1 import PeekResponse
+
+        mock_api = self._mock_api()
+        mock_api.peek.return_value = PeekResponse(offset=0x7000, count=16, data=b"\xEA" * 16)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--offset", "0x7000", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=0x7000, count=16)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_addr_with_and_without_0x_prefix(self, mock_hw_cls: MagicMock) -> None:
+        """--addr accepts 0x4000 and 4000 as the same hex value."""
+        from romulan.protocol_v1 import PeekResult
+
+        mock_api = self._mock_api()
+        mock_api.live_peek.return_value = PeekResult(addr=0x4000, data=0x14)
+        mock_hw_cls.return_value = mock_api
+
+        for addr_arg in ("0x4000", "4000"):
+            mock_api.live_peek.reset_mock()
+            with patch.object(
+                sys,
+                "argv",
+                ["romulan", "hardware", "peek", "--addr", addr_arg, "--port", "/dev/ttyFAKE"],
+            ):
+                main()
+            mock_api.live_peek.assert_called_once_with(0x4000)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_no_mode_is_bad_args(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek with neither --addr nor --offset is an error."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        errors = [o for o in self._parse_ndjson(capsys.readouterr().err) if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "Must specify --addr (live bus) or --offset (ROM image)",
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_addr_and_offset_conflict(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --addr --offset is an error."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--addr", "0x4000", "--offset", "0x7000", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        errors = [o for o in self._parse_ndjson(capsys.readouterr().err) if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "--addr and --offset are mutually exclusive",
+            }
+        ]
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_count_with_addr_conflict(self, mock_hw_cls: MagicMock, capsys) -> None:
+        """hardware peek --addr --count is an error (live mode is single-byte)."""
+        mock_api = self._mock_api()
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--addr", "0x4000", "--count", "4", "--port", "/dev/ttyFAKE"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 1
+        errors = [o for o in self._parse_ndjson(capsys.readouterr().err) if o["type"] == "error"]
+        assert errors == [
+            {
+                "v": 1,
+                "type": "error",
+                "error": "bad_args",
+                "detail": "--count is only valid with --offset",
+            }
+        ]

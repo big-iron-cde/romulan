@@ -19,10 +19,11 @@ uv sync
 
 ## First build and upload
 
-Romulan ships with `demo.txt`, a sample annotated hex dump. Build and upload it:
+Romulan ships with `demo.txt`, a sample annotated hex dump, and `demo.s`, the same program in 6502 assembly. Build and upload either one (the format is auto-detected):
 
 ```bash
 uv run romulan demo.txt --build --upload
+uv run romulan demo.s --build --upload
 ```
 
 This produces `bin/rom.bin` (32 KB) and uploads it to the Pico via the framed Hardware API.
@@ -37,7 +38,11 @@ uv run romulan demo.txt --build --upload --port /dev/cu.usbmodem101  # macOS
 uv run romulan demo.txt --build --upload --port COM3             # Windows
 ```
 
-## Input file format
+## Input file formats
+
+`--build` accepts two source formats, auto-detected from the file contents.
+
+### Annotated hex dump
 
 Each line in an annotated hex dump contains a file address, a byte value, and an optional comment after `@`:
 
@@ -53,6 +58,25 @@ Each line in an annotated hex dump contains a file address, a byte value, and an
 ```
 
 File addresses `0x0000`–`0x7FFF` map to CPU addresses `$8000`–`$FFFF`. Vectors at `0x7FFC`–`0x7FFF` are required.
+
+### 6502 assembly
+
+Assembly source uses CPU addresses directly. Comments start with `;`:
+
+```asm
+        .org $8000
+
+reset:  CLC
+        LDA #$05
+        STA $4000
+        STP
+
+        .org $FFFC
+        .word reset     ; reset vector
+        .word reset     ; IRQ/BRK vector
+```
+
+All official NMOS 6502 mnemonics are supported, plus the W65C02 additions used by the course (`STP`, `WAI`, `BRA`, `PHX`/`PHY`/`PLX`/`PLY`, `STZ`, `TRB`/`TSB`, accumulator `INC`/`DEC`, `(zp)` indirect). Numbers may be `$hex`, `0xhex` or decimal; directives are `.org`, `.byte` and `.word`. All emitted bytes must land in `$8000`–`$FFFF`, and the vectors are required here as well.
 
 ## Next steps
 
