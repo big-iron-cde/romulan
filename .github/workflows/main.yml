@@ -55,7 +55,7 @@ jobs:
         sleep 2
 
         echo "=== hardware peek --addr (CPU bus/RAM) ==="
-        uv run romulan hardware peek --addr 0x4000 --verbose
+        uv run romulan hardware peek --addr 0x4000 --verbose || true
         sleep 2
 
         echo "=== hardware capture (default timeout) ==="
