@@ -53,6 +53,10 @@ jobs:
         uv run romulan hardware peek --offset 0x7000 --count 16 --verbose
         sleep 2
 
+        echo "=== hardware reset --assert (before live peek) ==="
+        uv run romulan hardware reset --assert --verbose
+        sleep 2
+
         echo "=== hardware peek --addr (CPU bus/RAM) ==="
         uv run romulan hardware peek --addr 0x4000 --verbose
         sleep 2
