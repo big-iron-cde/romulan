@@ -3,7 +3,7 @@ name: Hardware Test
 on:
   push:
     branches:
-      - main
+# replace with "main"
       - workflow-hardware-testing
 
 jobs:
