@@ -28,7 +28,6 @@ jobs:
         uv run romulan demo.txt --build -o bin/rom.bin
 
     - name: Test hardware API commands
-      continue-on-error: true
       run: |
         echo "=== hardware reset --assert ==="
         uv run romulan hardware reset --assert --verbose
