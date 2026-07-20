@@ -63,6 +63,15 @@ uv run romulan hardware reset --assert
 uv run romulan hardware reset --release
 uv run romulan hardware monitor --disable
 uv run romulan hardware request-addr
+
+# Read back bytes from the loaded ROM image (CPU $F000 == offset 0x7000)
+uv run romulan hardware peek --offset 0x7000 --count 16
+
+# Set the 65C02 clock speed
+uv run romulan hardware clock --hz 100
+
+# Query firmware state
+uv run romulan hardware status
 ```
 
 ### Python client
@@ -74,6 +83,9 @@ with HardwareAPI("/dev/ttyACM0") as api:
     print(api.status())
     api.reset(assert_reset=True)
     api.upload_rom(open("bin/rom.bin", "rb").read())
+    # Verify the byte at CPU $F000 before releasing reset
+    print(api.peek(offset=0x7000, count=16).data.hex())
+    api.set_clock(hz=100.0)
     api.reset(assert_reset=False)
     capture = api.read_until_stp(max_cycles=500)
     print(capture.reason, len(capture.cycles))

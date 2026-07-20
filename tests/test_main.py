@@ -251,3 +251,124 @@ class TestHardwareVerbose:
             main()
 
         mock_hw_cls.assert_called_once_with("/dev/ttyFAKE", timeout=45.0, verbose=False)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_hex_offset(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek parses a hex offset and prints the returned bytes."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.peek.return_value = MagicMock(offset=0x7000, count=3, data=b"\xA9\xAA\x05")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE", "--offset", "0x7000", "--count", "3"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=0x7000, count=3)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_peek_decimal_offset(self, mock_hw_cls: MagicMock) -> None:
+        """hardware peek parses a decimal offset."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.peek.return_value = MagicMock(offset=28672, count=16, data=b"\xEA" * 16)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "peek", "--port", "/dev/ttyFAKE", "--offset", "28672"],
+        ):
+            main()
+
+        mock_api.peek.assert_called_once_with(offset=28672, count=16)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_clock(self, mock_hw_cls: MagicMock) -> None:
+        """hardware clock calls set_clock with the requested Hz."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "clock", "--port", "/dev/ttyFAKE", "--hz", "100"],
+        ):
+            main()
+
+        mock_api.set_clock.assert_called_once_with(hz=100.0)
+
+    @patch("romulan.main.HardwareAPI")
+    def test_status(self, mock_hw_cls: MagicMock) -> None:
+        """hardware status prints the firmware status snapshot."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.status.return_value = MagicMock(
+            phi2_hz=1000.0,
+            rom_active=True,
+            reset_asserted=False,
+            read_active=False,
+            monitor_enabled=False,
+            upload_active=False,
+            last_addr="F000",
+            last_data="4C",
+            last_rw=0,
+            resb=1,
+            rwb=0,
+            a15=1,
+            phi2=0,
+        )
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "status", "--port", "/dev/ttyFAKE"],
+        ):
+            main()
+
+        mock_api.status.assert_called_once_with()
+
+    @patch("romulan.main.HardwareAPI")
+    def test_drive_enable(self, mock_hw_cls: MagicMock) -> None:
+        """hardware drive --value calls api.drive with the byte."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.drive.return_value = MagicMock(enabled=True, value="A5")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "drive", "--port", "/dev/ttyFAKE", "--value", "A5"],
+        ):
+            main()
+
+        mock_api.drive.assert_called_once_with("A5")
+
+    @patch("romulan.main.HardwareAPI")
+    def test_drive_disable(self, mock_hw_cls: MagicMock) -> None:
+        """hardware drive --disable calls api.drive(None)."""
+        mock_api = MagicMock()
+        mock_api.__enter__ = MagicMock(return_value=mock_api)
+        mock_api.__exit__ = MagicMock(return_value=False)
+        mock_api.drive.return_value = MagicMock(enabled=False, value="00")
+        mock_hw_cls.return_value = mock_api
+
+        with patch.object(
+            sys,
+            "argv",
+            ["romulan", "hardware", "drive", "--port", "/dev/ttyFAKE", "--disable"],
+        ):
+            main()
+
+        mock_api.drive.assert_called_once_with(None)

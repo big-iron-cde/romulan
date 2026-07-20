@@ -14,6 +14,9 @@ Examples:
     romulan hardware monitor --disable
     romulan hardware reset --assert
     romulan hardware request-addr
+    romulan hardware peek --offset 0x7000 --count 16
+    romulan hardware clock --hz 100
+    romulan hardware status
 """
 
 import argparse
@@ -175,7 +178,83 @@ def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     )
     _add_common_args(addr_parser)
 
+    # --- peek ---
+    peek_parser = sub.add_parser(
+        "peek",
+        help="Read bytes back from the loaded ROM image",
+    )
+    peek_parser.add_argument(
+        "--offset",
+        type=str,
+        default="0x7000",
+        help="ROM offset to read from (hex or decimal; default: 0x7000)",
+    )
+    peek_parser.add_argument(
+        "--count",
+        type=int,
+        default=16,
+        help="Number of bytes to read, 1-64 (default: 16)",
+    )
+    _add_common_args(peek_parser)
+
+    # --- clock ---
+    clock_parser = sub.add_parser(
+        "clock",
+        help="Set the 65C02 PHI2 clock frequency",
+    )
+    clock_parser.add_argument(
+        "--hz",
+        type=float,
+        required=True,
+        help="Clock frequency in Hz (0.1..1000)",
+    )
+    _add_common_args(clock_parser)
+
+    # --- drive ---
+    drive_parser = sub.add_parser(
+        "drive",
+        help="Force D0-D7 to a byte (diagnostic) or release the bus",
+    )
+    drive_parser.add_argument(
+        "--value",
+        type=str,
+        default=None,
+        help="2-digit hex byte to drive on D0-D7 (omit to release)",
+    )
+    drive_parser.add_argument(
+        "--disable",
+        action="store_true",
+        dest="disable",
+        help="Release D0-D7 and return to normal emulation",
+    )
+    _add_common_args(drive_parser)
+
+    # --- status ---
+    status_parser = sub.add_parser(
+        "status",
+        help="Query firmware state (clock, reset, ROM, monitor, last bus sample)",
+    )
+    _add_common_args(status_parser)
+
     return parser
+
+
+def _parse_int(value: str) -> int:
+    """Parse an integer that may be given in decimal or hex.
+
+    Args:
+        value: A string representing an integer, e.g. ``"28672"`` or ``"0x7000"``.
+
+    Returns:
+        The parsed integer.
+
+    Raises:
+        argparse.ArgumentTypeError: If the value cannot be parsed.
+    """
+    try:
+        return int(value, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from exc
 
 
 def _resolve_port(port: str | None) -> str:
@@ -210,8 +289,8 @@ def _handle_hardware(args: argparse.Namespace) -> None:
     """Dispatch a parsed ``hardware`` sub-command against the hardware API.
 
     Opens a :class:`~romulan.hardware_api.HardwareAPI` on the resolved port and
-    runs the requested operation (upload, capture, monitor, reset, or
-    request-addr), printing results to stdout.
+    runs the requested operation (upload, capture, monitor, reset,
+    request-addr, peek, clock, or status), printing results to stdout.
 
     Side effects:
         Opens the serial port and drives the hardware. May call
@@ -278,6 +357,42 @@ def _handle_hardware(args: argparse.Namespace) -> None:
             elif cmd == "request-addr":
                 addr = api.request_addr()
                 print(f"Current CPU address: 0x{addr:04X}")
+
+            elif cmd == "peek":
+                offset = _parse_int(args.offset)
+                result = api.peek(offset=offset, count=args.count)
+                print(f"ROM offset 0x{result.offset:04X} ({result.count} bytes): {result.data.hex()}")
+
+            elif cmd == "clock":
+                api.set_clock(hz=args.hz)
+                print(f"Clock set to {args.hz} Hz")
+
+            elif cmd == "drive":
+                if args.disable and args.value is not None:
+                    print("ERROR: Cannot specify both --value and --disable", file=sys.stderr)
+                    sys.exit(1)
+                if args.disable:
+                    result = api.drive(None)
+                else:
+                    result = api.drive(args.value)
+                print(f"Drive force: {'enabled' if result.enabled else 'disabled'}, value=0x{result.value}")
+
+            elif cmd == "status":
+                st = api.status()
+                print(f"PHI2: {st.phi2_hz:.1f} Hz")
+                print(f"ROM active: {st.rom_active}")
+                print(f"Reset asserted: {st.reset_asserted}")
+                print(f"Read active: {st.read_active}")
+                print(f"Monitor enabled: {st.monitor_enabled}")
+                print(f"Upload active: {st.upload_active}")
+                print(f"Last addr: 0x{st.last_addr}")
+                print(f"Last data: 0x{st.last_data}")
+                print(f"Last rw: {st.last_rw} ({'read' if st.last_rw == 0 else 'write'})")
+                print("Raw pin levels:")
+                print(f"  RESB: {st.resb} ({'released' if st.resb else 'asserted'})")
+                print(f"  RWB:  {st.rwb} ({'read' if st.rwb else 'write'})")
+                print(f"  A15:  {st.a15} ({'ROM space' if st.a15 else 'RAM space'})")
+                print(f"  PHI2: {st.phi2} ({'high' if st.phi2 else 'low'})")
 
     except (HardwareAPIError, TimeoutError) as exc:
         print(f"ERROR: Hardware API failed: {exc}", file=sys.stderr)

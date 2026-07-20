@@ -19,6 +19,8 @@ PROTO_JSON_MAX = 48 * 1024
 ROM_SIZE = 0x8000
 # Must match piclone UPLOAD_CHUNK_RAW_MAX — one chunk can carry the whole ROM.
 CHUNK_RAW_MAX = ROM_SIZE
+# Default number of capture cycles to request per read_event poll.
+READ_EVENT_BATCH_SIZE = 32
 
 
 class ProtocolV1Error(Exception):
@@ -103,9 +105,15 @@ class StatusResponse:
         rom_active: Whether the ROM emulator is driving the bus.
         reset_asserted: Whether the CPU RESET line is asserted.
         last_addr: Last address seen on the bus, as a hex string.
+        last_data: Data byte from the last bus sample, as a hex string.
+        last_rw: Read/write flag from the last bus sample (0 = read, 1 = write).
         read_active: Whether a bus-capture read is currently running.
         monitor_enabled: Whether the ASCII monitor output is enabled.
         upload_active: Whether a ROM upload is in progress.
+        resb: Raw RESB (reset) input level (0 = low/asserted, 1 = high/released).
+        rwb: Raw RWB input level (0 = write, 1 = read).
+        a15: Raw A15 input level (0 = RAM space, 1 = ROM space).
+        phi2: Raw PHI2 clock input level (0 = low, 1 = high).
     """
 
     phi2_hz: float
@@ -115,6 +123,40 @@ class StatusResponse:
     read_active: bool
     monitor_enabled: bool
     upload_active: bool = False
+    last_data: str = "00"
+    last_rw: int = 0
+    resb: int = 0
+    rwb: int = 0
+    a15: int = 0
+    phi2: int = 0
+
+
+@dataclass
+class PeekResponse:
+    """Response from the ``peek`` command returning ROM image bytes.
+
+    Attributes:
+        offset: Byte offset within ``rom_image[]`` that was read.
+        count: Number of bytes returned (may be clipped to ROM bounds).
+        data: The returned bytes.
+    """
+
+    offset: int
+    count: int
+    data: bytes
+
+
+@dataclass
+class DriveResponse:
+    """Response from the ``drive`` diagnostic command.
+
+    Attributes:
+        enabled: Whether the Pico is currently forcing D0-D7 as outputs.
+        value: The forced byte as a 2-digit hex string, or ``"00"`` when disabled.
+    """
+
+    enabled: bool
+    value: str = "00"
 
 
 @dataclass
@@ -278,6 +320,41 @@ def parse_done_event(msg: dict[str, Any]) -> DoneEvent:
     )
 
 
+def parse_cycles_event(msg: dict[str, Any]) -> list[CycleEvent]:
+    """Parse a batched ``cycles`` event frame into a list of :class:`CycleEvent`.
+
+    Args:
+        msg: A parsed frame expected to be a ``cycles`` event.
+
+    Returns:
+        The captured bus cycles in order.
+
+    Raises:
+        ProtocolV1Error: If the frame is not a ``cycles`` event, the version
+            is unsupported, or a cycle entry is malformed.
+    """
+    _require_version(msg)
+    if msg.get("type") != "event" or msg.get("event") != "cycles":
+        raise ProtocolV1Error(f"expected cycles event, got {msg!r}")
+    raw_cycles = msg.get("cycles")
+    if not isinstance(raw_cycles, list):
+        raise ProtocolV1Error("cycles event missing 'cycles' array")
+
+    events: list[CycleEvent] = []
+    for item in raw_cycles:
+        if not isinstance(item, dict):
+            raise ProtocolV1Error(f"cycle entry must be an object, got {item!r}")
+        events.append(
+            CycleEvent(
+                seq=int(item["seq"]),
+                addr=str(item["addr"]),
+                data=str(item["data"]),
+                rw=int(item["rw"]),
+            )
+        )
+    return events
+
+
 def parse_status(msg: dict[str, Any]) -> StatusResponse:
     """Parse a ``status`` command response into a :class:`StatusResponse`.
 
@@ -297,9 +374,59 @@ def parse_status(msg: dict[str, Any]) -> StatusResponse:
         rom_active=bool(msg.get("rom_active")),
         reset_asserted=bool(msg.get("reset_asserted")),
         last_addr=str(msg.get("last_addr", "0000")),
+        last_data=str(msg.get("last_data", "00")),
+        last_rw=int(msg.get("last_rw", 0)),
         read_active=bool(msg.get("read_active")),
         monitor_enabled=bool(msg.get("monitor_enabled")),
         upload_active=bool(msg.get("upload_active")),
+        resb=int(msg.get("resb", 0)),
+        rwb=int(msg.get("rwb", 0)),
+        a15=int(msg.get("a15", 0)),
+        phi2=int(msg.get("phi2", 0)),
+    )
+
+
+def parse_peek_response(msg: dict[str, Any]) -> PeekResponse:
+    """Parse a ``peek`` command response into a :class:`PeekResponse`.
+
+    Args:
+        msg: A parsed frame expected to be a successful ``peek`` response.
+
+    Returns:
+        The decoded offset, count, and bytes.
+
+    Raises:
+        ProtocolV1Error: If the frame reports an error, the version is
+            unsupported, or the hex data is malformed.
+    """
+    parse_command_response(msg)
+    offset = int(msg.get("offset", 0))
+    count = int(msg.get("count", 0))
+    hex_data = str(msg.get("data", ""))
+    try:
+        data = bytes.fromhex(hex_data)
+    except ValueError as exc:
+        raise ProtocolV1Error(f"peek returned invalid hex data: {exc}") from exc
+    return PeekResponse(offset=offset, count=count, data=data)
+
+
+def parse_drive_response(msg: dict[str, Any]) -> DriveResponse:
+    """Parse a ``drive`` command response into a :class:`DriveResponse`.
+
+    Args:
+        msg: A parsed frame expected to be a successful ``drive`` response.
+
+    Returns:
+        The decoded drive force state.
+
+    Raises:
+        ProtocolV1Error: If the frame reports an error or the version is
+            unsupported.
+    """
+    parse_command_response(msg)
+    return DriveResponse(
+        enabled=bool(msg.get("enabled")),
+        value=str(msg.get("value", "00")),
     )
 
 
