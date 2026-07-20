@@ -1,0 +1,58 @@
+name: Hardware Test
+
+on:
+  push:
+    branches:
+      - main
+      - workflow-hardware-testing
+
+jobs:
+  hardware-test:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup uv
+      run: |
+        echo "Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        source $HOME/.local/bin/env
+        uv sync
+
+    - name: Build test ROM
+      run: |
+        mkdir -p bin
+        uv run romulan demo.txt --build -o bin/rom.bin
+
+    - name: Test hardware API commands
+      continue-on-error: true
+      run: |
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert --verbose || true
+        sleep 2
+
+        echo "=== hardware upload ==="
+        uv run romulan hardware upload bin/rom.bin --verbose 
+        sleep 2
+
+        echo "=== hardware reset --release ==="
+        uv run romulan hardware reset --release --verbose 
+        sleep 2
+
+        echo "=== hardware capture (default timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --verbose 
+        sleep 2
+
+        echo "=== hardware capture (custom timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose 
+        sleep 2
+
+        echo "=== hardware monitor --disable ==="
+        uv run romulan hardware monitor --disable --verbose 
+        sleep 2
+
+        echo "=== hardware monitor --enable ==="
+        uv run romulan hardware monitor --enable --verbose 

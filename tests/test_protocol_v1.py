@@ -19,6 +19,7 @@ from romulan.protocol_v1 import (
     parse_done_event,
     parse_drive_response,
     parse_frame,
+    parse_live_peek_response,
     parse_peek_response,
     parse_status,
     parse_upload_response,
@@ -195,3 +196,23 @@ def test_parse_drive_response_disabled():
 def test_chunk_raw_max():
     assert CHUNK_RAW_MAX == ROM_SIZE
     assert CHUNK_RAW_MAX == 0x8000
+
+
+def test_parse_live_peek_response():
+    msg = {
+        "v": 1,
+        "ok": True,
+        "cmd": "peek",
+        "addr": "4000",
+        "data": "14",
+    }
+    peek = parse_live_peek_response(msg)
+    assert peek.addr == 0x4000
+    assert peek.data == 0x14
+
+
+def test_parse_live_peek_response_error():
+    msg = {"v": 1, "ok": False, "error": "no_cycle", "detail": "no bus cycle matched addr"}
+    with pytest.raises(ProtocolV1Error) as exc:
+        parse_live_peek_response(msg)
+    assert exc.value.error == "no_cycle"

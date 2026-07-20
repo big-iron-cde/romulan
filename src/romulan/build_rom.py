@@ -12,9 +12,15 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
+from .assemble import parse_asm_file
+from .output import emit_error, emit_result
+
 ROM_SIZE = 0x8000  # 32 KB
 ROM_BASE_ADDR = 0x8000  # ROM starts at CPU address $8000
 ERROR_COUNTER = 0  # Global counter for errors encountered during ROM build
+
+# Annotated hex dump line: "0x0000   0x18   @ optional comment"
+_HEX_LINE_PATTERN = re.compile(r"^\s*0x([0-9A-Fa-f]+)\s+0x([0-9A-Fa-f]{2})")
 
 
 class InvalidInstructionError(Exception):
@@ -79,6 +85,33 @@ def cpu_to_offset(cpu_addr: int) -> int:
     return cpu_addr - ROM_BASE_ADDR
 
 
+def detect_format(path: Path) -> str:
+    """Detect the input format of a ROM source file.
+
+    Sniffs the first meaningful line (skipping blank lines and full-line
+    ``;`` or ``@`` comments): if it matches the annotated hex dump shape
+    (``0xADDR 0xBYTE``) the file is a hex dump, otherwise it is treated
+    as 6502 assembly. File extensions are not consulted — either format
+    may live in a ``.txt`` or ``.s`` file.
+
+    Args:
+        path: Path to the input file.
+
+    Returns:
+        ``"hex"`` for an annotated hex dump or ``"asm"`` for 6502 assembly.
+
+    Raises:
+        ValueError: If the file contains no data lines.
+    """
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if not stripped or stripped.startswith((";", "@")):
+                continue
+            return "hex" if _HEX_LINE_PATTERN.match(stripped) else "asm"
+    raise ValueError(f"Input file contains no data: {path}")
+
+
 def parse_hex_file(path: Path) -> dict[int, int]:
     """Parse an annotated hex dump file into a dict of CPU address -> byte.
 
@@ -101,7 +134,6 @@ def parse_hex_file(path: Path) -> dict[int, int]:
         ValueError: If a line cannot be parsed or an address is out of range.
     """
     data: dict[int, int] = {}
-    line_pattern = re.compile(r"^\s*0x([0-9A-Fa-f]+)\s+0x([0-9A-Fa-f]{2})")
 
     with open(path, "r", encoding="utf-8") as fh:
         for line_num, line in enumerate(fh, start=1):
@@ -109,7 +141,7 @@ def parse_hex_file(path: Path) -> dict[int, int]:
             if not line:
                 continue
 
-            match = line_pattern.match(line)
+            match = _HEX_LINE_PATTERN.match(line)
             if not match:
                 raise ValueError(f"Cannot parse line {line_num}: {line.strip()!r}")
 
@@ -252,11 +284,15 @@ def error_processing(data_dict: Dict[int, int]) -> List:
 
 
 def build_rom(input_path: Path, output_path: Path) -> None:
-    """Parse a hex dump file and write a 32 KB ROM binary.
+    """Parse a ROM source file and write a 32 KB ROM binary.
 
-    Runs opcode and address-order validation before writing. Unused bytes are
-    filled with ``$EA`` (NOP). The reset and IRQ/BRK vectors at ``$FFFC``–``$FFFF``
-    must be present in the input or the build fails.
+    The input may be an annotated hex dump or 6502 assembly (auto-detected
+    by :func:`detect_format`). Hex dumps get opcode and address-order
+    validation before writing; assembled input is valid by construction and
+    may contain gaps from ``.org`` directives, so that validation is skipped
+    for it. Unused bytes are filled with ``$EA`` (NOP). The reset and
+    IRQ/BRK vectors at ``$FFFC``–``$FFFF`` must be present in the input or
+    the build fails.
 
     Side effects:
         Resets :data:`ERROR_COUNTER`, may print errors and call ``sys.exit(1)``,
@@ -264,7 +300,7 @@ def build_rom(input_path: Path, output_path: Path) -> None:
         and prints a summary to stdout.
 
     Args:
-        input_path: Path to the annotated hex dump file.
+        input_path: Path to the annotated hex dump or 6502 assembly file.
         output_path: Destination path for the 32 KB ``.bin`` file.
 
     Raises:
@@ -272,15 +308,20 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     """
     global ERROR_COUNTER
     ERROR_COUNTER = 0
-    parsed = parse_hex_file(input_path)
+    input_format = detect_format(input_path)
+    if input_format == "hex":
+        parsed = parse_hex_file(input_path)
 
-    master_error_list = error_processing(parsed)
-    if ERROR_COUNTER > 0:
-        print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
-        for error in master_error_list:
-            print(f"  {error}")
-        print("ROM build failed due to errors.")
-        sys.exit(1)
+        master_error_list = error_processing(parsed)
+        if ERROR_COUNTER > 0:
+            emit_error(
+                "build_failed",
+                f"Encountered {ERROR_COUNTER} errors while building ROM",
+                errors=[str(error) for error in master_error_list],
+            )
+            sys.exit(1)
+    else:
+        parsed = parse_asm_file(input_path)
 
     rom = bytearray([0xEA] * ROM_SIZE)
 
@@ -306,6 +347,13 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     with open(output_path, "wb") as fh:
         fh.write(rom)
 
-    print(f"Wrote {len(rom)} bytes to {output_path}")
-    print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
-    print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
+    emit_result(
+        "build",
+        {
+            "bytes": len(rom),
+            "output": str(output_path),
+            "format": input_format,
+            "reset_vector": f"{rom[0x7FFD]:02X}{rom[0x7FFC]:02X}",
+            "irq_vector": f"{rom[0x7FFF]:02X}{rom[0x7FFE]:02X}",
+        },
+    )

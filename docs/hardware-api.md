@@ -22,6 +22,28 @@ with HardwareAPI("/dev/ttyACM0") as api:
 
 `HardwareAPI` opens the serial port on construction and closes it on exit from a `with` block.
 
+## Output schema (v1)
+
+Everything the `romulan` CLI prints is a single self-contained JSON object per line
+(NDJSON), always carrying `"v":1` and `"type"`:
+
+| Type | Shape | Stream |
+|------|-------|--------|
+| `result` | `{"v":1,"type":"result","cmd":"<cmd>","data":{...}}` | stdout |
+| `event` | `{"v":1,"type":"event","event":"<name>","data":{...}}` | stdout (domain events), stderr (trace/port detection) |
+| `error` | `{"v":1,"type":"error","error":"<code>","detail":"<msg>"}` (+ optional `"errors":[...]`) | stderr |
+
+```bash
+$ uv run romulan hardware reset --assert
+{"v":1,"type":"result","cmd":"reset","data":{"asserted":true}}
+```
+
+Domain events are emitted for streamed data (one `cycle` event per captured bus
+cycle) and for port auto-detection (`port_detected`, stderr). With `--verbose`,
+the protocol trace (`open`/`send`/`recv`/`ack`/`call`/`ret`/`resync`, …) is
+emitted as `event` objects on stderr, so stdout stays parseable as pure command
+output. See `romulan/output.py` for the canonical definition.
+
 ## Framed protocol
 
 Every command and response travels inside a byte-level frame:
@@ -43,8 +65,9 @@ All JSON payloads include `"v": 1`. An optional `"id"` field is echoed in respon
 |---------|---------|
 | `upload_rom` | Upload 32 KB ROM (begin → chunk × N → commit) |
 | `reset` | Assert or release CPU reset |
-| `monitor` | Enable or disable ASCII bus monitor |
+| `monitor` | Enable or disable the JSON bus monitor |
 | `request_addr` | Read current CPU address |
+| `peek` | Read ROM-image bytes (`offset`/`count`) or live-peek one CPU bus/RAM byte (`addr`) |
 | `read` | Capture bus cycles until STP or max cycles |
 | `clock` | Set PHI2 clock frequency (0.1–1000 Hz) |
 | `status` | Query firmware state (clock, reset, ROM, monitor, last bus sample) |
@@ -57,7 +80,7 @@ The upload is a three-phase sequence with base64-encoded chunks (max 1,476 raw b
 2. `{"v":1,"cmd":"upload_rom","action":"chunk","offset":N,"data":"<base64>"}` — repeated
 3. `{"v":1,"cmd":"upload_rom","action":"commit"}` — returns `reset_vector`
 
-`upload_rom()` disables the ASCII monitor and flushes serial input before transferring.
+`upload_rom()` disables the JSON monitor and flushes serial input before transferring.
 
 ### Bus capture
 
@@ -97,10 +120,46 @@ uv run romulan hardware status
 This prints the current PHI2 frequency, ROM/reset/monitor state, and the last
 bus sample (`last_addr`, `last_data`, `last_rw`).
 
+### Peek
+
+One command, two modes, selected by which flags you pass:
+
+**ROM-image mode** (`--offset`, optional `--count` 1–64, default 16) reads bytes
+back from the loaded ``rom_image[]`` in Pico SRAM — useful for verifying an
+upload landed at the expected offsets before releasing RESET:
+
+```bash
+uv run romulan hardware peek --offset 0x7000 --count 16
+```
+
+**Live mode** (`--addr`) asks the firmware to reset the CPU, run `LDA $addr` / `STP` from `$8000`, and return the data byte sampled on the matching address cycle. Use this to read live RAM (e.g. `$4000` after an STA), not a host ROM-image offset. The breadboard must wire **RAM OE# = NOT(RWB)**; with OE# tied high, peeks see open bus (often the address high byte).
+
+```bash
+uv run romulan hardware peek --addr 0x4000
+```
+
+The Python API exposes the two modes as separate methods, `api.peek(offset, count)` and `api.live_peek(addr)`:
+
+```python
+result = api.live_peek(0x4000)
+print(f"${result.addr:04X} = ${result.data:02X}")
+```
+
+```{note}
+Current piclone firmware implements both modes in one `peek` command
+(dispatching on `addr` vs `offset`). Older ROM-image-only flashes do **not**
+reject live requests — they answer with a ROM-mode response instead. Romulan
+detects the mismatch and fails with `firmware does not support live peek
+(--addr)` (and vice versa for `--offset` against live-only firmware); reflash
+to get live mode.
+```
+
 ## Important notes
 
 - Do not open a plain serial monitor on the port while using the framed protocol — unstructured output corrupts framing.
-- Disable the ASCII monitor before scripted upload or capture (the client methods do this automatically).
+- Disable the JSON monitor before scripted upload or capture (the client methods do this automatically).
+- If unstructured lines (monitor output) do precede a response frame, the client resynchronizes by taking the text after the last newline, from the first `{` — this skips both legacy ASCII monitor rows and newline-terminated JSON monitor lines. With `--verbose` this is reported as a `{"v":1,"type":"event","event":"resync","data":{"skipped_bytes":N}}` event. Bytes interleaved *inside* a payload still fail parsing, so keeping the monitor off during scripted sessions remains the recommendation.
+- `live_peek` briefly asserts reset around the stub program; do not rely on CPU state surviving a live peek.
 - The ROM image in Pico SRAM is lost on power cycle — re-upload after each reboot.
 
 ## Python API reference
