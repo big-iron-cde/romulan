@@ -9,7 +9,7 @@ on:
 jobs:
   hardware-test:
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-seconds: 120
     steps:
     - uses: actions/checkout@v4
       with:
@@ -22,12 +22,62 @@ jobs:
         source $HOME/.local/bin/env
         uv sync
 
-    - name: Build test ROM
+    - name: Build demo.txt
       run: |
         mkdir -p bin
         uv run romulan demo.txt --build -o bin/rom.bin
 
-    - name: Test hardware API commands
+    - name: Test hardware API commands on demo.txt
+      run: |
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert --verbose
+        sleep 2
+
+        echo "=== hardware upload ==="
+        uv run romulan hardware upload bin/rom.bin --verbose 
+        sleep 2
+
+        echo "=== hardware reset --release ==="
+        uv run romulan hardware reset --release --verbose
+        sleep 2
+
+        echo "=== hardware status ==="
+        uv run romulan hardware status --verbose
+        sleep 2
+
+        echo "=== hardware clock ==="
+        uv run romulan hardware clock --hz 100 --verbose
+        sleep 2
+
+        echo "=== hardware peek --offset (ROM image) ==="
+        uv run romulan hardware peek --offset 0x7000 --count 16 --verbose
+        sleep 2
+
+        echo "=== hardware peek --addr (CPU bus/RAM) ==="
+        uv run romulan hardware peek --addr 0x4000 --verbose 
+        sleep 2
+
+        echo "=== hardware capture (default timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --verbose
+        sleep 2
+
+        echo "=== hardware capture (custom timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose 
+        sleep 2
+
+        echo "=== hardware monitor --disable ==="
+        uv run romulan hardware monitor --disable --verbose 
+        sleep 2
+
+        echo "=== hardware monitor --enable ==="
+        uv run romulan hardware monitor --enable --verbose 
+
+    - name: Build add.txt
+      run: |
+        mkdir -p bin
+        uv run romulan add.txt --build -o bin/rom.bin
+
+    - name: Test hardware API commands on add.txt
       run: |
         echo "=== hardware reset --assert ==="
         uv run romulan hardware reset --assert --verbose
