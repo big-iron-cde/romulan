@@ -319,11 +319,17 @@ def build_rom(input_path: Path, output_path: Path, verbose: bool = False) -> Non
     ERROR_COUNTER = 0
     
     _emit_build("start", {"input": str(input_path), "output": str(output_path)}, verbose)
-    input_format = detect_format(input_path)
-    if input_format == "hex":
-        parsed = parse_hex_file(input_path)
-    else:
-        parsed = parse_asm_file(input_path)
+
+    try:
+        input_format = detect_format(input_path)
+        if input_format == "hex":
+            parsed = parse_hex_file(input_path)
+        else:
+            parsed = parse_asm_file(input_path)
+    except ValueError as exc:
+        _emit_build("error", {"message": str(exc)}, verbose)
+        _emit_build("done", {"ok": False}, verbose)
+        raise
     _emit_build("parse", {"lines_parsed": len(parsed)}, verbose)
 
     if input_format == "hex":
@@ -333,10 +339,11 @@ def build_rom(input_path: Path, output_path: Path, verbose: bool = False) -> Non
     _emit_build("validate", {"errors": ERROR_COUNTER}, verbose)
 
     if ERROR_COUNTER > 0:
-        print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
-        for error in master_error_list:
-            print(f"  {error}")
-        print("ROM build failed due to errors.")
+        if not verbose:
+            print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
+            for error in master_error_list:
+                print(f"  {error}")
+            print("ROM build failed due to errors.")
         _emit_build("error", {"errors": ERROR_COUNTER, "messages": master_error_list}, verbose)
         _emit_build("done", {"ok": False}, verbose)
         sys.exit(1)
@@ -360,8 +367,10 @@ def build_rom(input_path: Path, output_path: Path, verbose: bool = False) -> Non
         if rom[offset] == 0xEA:
             missing.append(f"  ${addr:04X} ({desc})")
     if missing:
+        msg = "ROM is missing required vectors:\n" + "\n".join(missing)
+        _emit_build("error", {"message": msg}, verbose)
         _emit_build("done", {"ok": False}, verbose)
-        raise ValueError("ROM is missing required vectors:\n" + "\n".join(missing))
+        raise ValueError(msg)
 
     _emit_build("fill", {"start": "0x0000", "end": f"0x{ROM_SIZE - 1:04X}", "byte": "0xEA", "count": nop_fill_count}, verbose)
 
@@ -385,6 +394,8 @@ def build_rom(input_path: Path, output_path: Path, verbose: bool = False) -> Non
         {"ok": True, "reset_vector": reset_vector, "irq_vector": irq_vector, "format": input_format},
         verbose,
     )
-    print(f"Wrote {len(rom)} bytes to {output_path}")
-    print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
-    print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
+
+    if not verbose:
+        print(f"Wrote {len(rom)} bytes to {output_path}")
+        print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
+        print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")

@@ -129,8 +129,8 @@ class TestCli:
         assert events[0]["event"] == "start"
         assert events[-1]["event"] == "done"
         assert events[-1]["ok"] is True
-        # Normal stdout result is still present
-        assert "Wrote 32768 bytes" in captured.out
+        # In verbose mode human-readable stdout is suppressed
+        assert "Wrote 32768 bytes" not in captured.out
 
     def test_upload_without_rom(self, tmp_path: Path) -> None:
         out = tmp_path / "rom.bin"
