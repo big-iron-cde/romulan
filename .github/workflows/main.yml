@@ -22,19 +22,19 @@ jobs:
         source $HOME/.local/bin/env
         uv sync
 
-    - name: Build demo.txt
+    - name: Build ram_write.txt
       run: |
         mkdir -p bin
-        uv run romulan demo.txt --build -o bin/rom.bin
+        uv run romulan tests/ram_write.txt --build -o bin/ram_write.bin
 
-    - name: Test hardware API commands on demo.txt
+    - name: Test hardware API commands on ram_write.txt
       run: |
         echo "=== hardware reset --assert ==="
         uv run romulan hardware reset --assert --verbose
         sleep 2
 
         echo "=== hardware upload ==="
-        uv run romulan hardware upload bin/rom.bin --verbose 
+        uv run romulan hardware upload bin/ram_write.bin --verbose 
         sleep 2
 
         echo "=== hardware reset --release ==="
