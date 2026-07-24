@@ -9,7 +9,7 @@ on:
 jobs:
   hardware-test:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
       with:
@@ -22,37 +22,200 @@ jobs:
         source $HOME/.local/bin/env
         uv sync
 
-    - name: Build test ROM
+    - name: Build ram_write.s
       run: |
         mkdir -p bin
-        uv run romulan demo.txt --build -o bin/rom.bin
+        uv run romulan tests/ram_write.s --build -o bin/ram_write.bin
 
-    - name: Test hardware API commands
-      continue-on-error: true
+    - name: Test hardware API commands on ram_write.s
       run: |
         echo "=== hardware reset --assert ==="
-        uv run romulan hardware reset --assert --verbose || true
+        uv run romulan hardware reset --assert
         sleep 2
 
         echo "=== hardware upload ==="
-        uv run romulan hardware upload bin/rom.bin --verbose 
+        uv run romulan hardware upload bin/ram_write.bin 
         sleep 2
 
         echo "=== hardware reset --release ==="
-        uv run romulan hardware reset --release --verbose 
+        uv run romulan hardware reset --release
+        sleep 2
+
+        echo "=== hardware status ==="
+        uv run romulan hardware status
+        sleep 2
+
+        echo "=== hardware clock ==="
+        uv run romulan hardware clock --hz 100
+        sleep 2
+
+        echo "=== hardware peek --offset (ROM image) ==="
+        uv run romulan hardware peek --offset 0x7000 --count 16
+        sleep 2
+
+        echo "=== hardware peek --addr (CPU bus/RAM) ==="
+        uv run romulan hardware peek --addr 0x4000  
         sleep 2
 
         echo "=== hardware capture (default timeout) ==="
-        uv run romulan hardware capture --max-cycles 500 --verbose 
+        uv run romulan hardware capture --max-cycles 500 
         sleep 2
 
         echo "=== hardware capture (custom timeout) ==="
-        uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose 
+        uv run romulan hardware capture --timeout 45 
         sleep 2
 
         echo "=== hardware monitor --disable ==="
-        uv run romulan hardware monitor --disable --verbose 
+        uv run romulan hardware monitor --disable 
         sleep 2
 
         echo "=== hardware monitor --enable ==="
-        uv run romulan hardware monitor --enable --verbose 
+        uv run romulan hardware monitor --enable  
+
+    - name: Build ram_write.S (mnemonic version)
+      run: |
+        mkdir -p bin
+        uv run romulan tests/ram_write.S --build -o bin/ram_write_m.bin
+
+    - name: Test hardware API commands on ram_write.S
+      run: |
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert
+        sleep 2
+
+        echo "=== hardware upload ==="
+        uv run romulan hardware upload bin/ram_write_m.bin 
+        sleep 2
+
+        echo "=== hardware reset --release ==="
+        uv run romulan hardware reset --release
+        sleep 2
+
+        echo "=== hardware status ==="
+        uv run romulan hardware status
+        sleep 2
+
+        echo "=== hardware clock ==="
+        uv run romulan hardware clock --hz 100
+        sleep 2
+
+        echo "=== hardware peek --offset (ROM image) ==="
+        uv run romulan hardware peek --offset 0x7000 --count 16
+        sleep 2
+
+        echo "=== hardware peek --addr (CPU bus/RAM) ==="
+        uv run romulan hardware peek --addr 0x4000
+        sleep 2
+
+        echo "=== hardware capture (default timeout) ==="
+        uv run romulan hardware capture --max-cycles 500
+        sleep 2
+
+        echo "=== hardware capture (custom timeout) ==="
+        uv run romulan hardware capture --timeout 45 
+        sleep 2
+
+        echo "=== hardware monitor --disable ==="
+        uv run romulan hardware monitor --disable 
+        sleep 2
+
+        echo "=== hardware monitor --enable ==="
+        uv run romulan hardware monitor --enable
+
+    - name: Build add.s
+      run: |
+        uv run romulan tests/add.s --build -o bin/add.bin
+
+    - name: Test hardware API commands on add.s
+      run: |
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert
+        sleep 2
+
+        echo "=== hardware upload ==="
+        uv run romulan hardware upload bin/add.bin 
+        sleep 2
+
+        echo "=== hardware reset --release ==="
+        uv run romulan hardware reset --release
+        sleep 2
+
+        echo "=== hardware status ==="
+        uv run romulan hardware status
+        sleep 2
+
+        echo "=== hardware clock ==="
+        uv run romulan hardware clock --hz 100 
+        sleep 2
+
+        echo "=== hardware peek --offset (ROM image) ==="
+        uv run romulan hardware peek --offset 0x7000 --count 16
+        sleep 2
+
+        echo "=== hardware peek --addr (CPU bus/RAM) ==="
+        uv run romulan hardware peek --addr 0x4000 
+        sleep 2
+
+        echo "=== hardware capture (default timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 
+        sleep 2
+
+        echo "=== hardware capture (custom timeout) ==="
+        uv run romulan hardware capture --timeout 45  
+        sleep 2
+
+        echo "=== hardware monitor --disable ==="
+        uv run romulan hardware monitor --disable  
+        sleep 2
+
+        echo "=== hardware monitor --enable ==="
+        uv run romulan hardware monitor --enable 
+
+    - name: Build loop.s
+      run: |
+        uv run romulan tests/loop.s --build -o bin/loop.bin
+
+    - name: Test hardware API commands on loop.s
+      run: |
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert
+        sleep 2
+
+        echo "=== hardware upload ==="
+        uv run romulan hardware upload bin/loop.bin  
+        sleep 2
+
+        echo "=== hardware reset --release ==="
+        uv run romulan hardware reset --release 
+        sleep 2
+
+        echo "=== hardware status ==="
+        uv run romulan hardware status 
+        sleep 2
+
+        echo "=== hardware clock ==="
+        uv run romulan hardware clock --hz 100 
+        sleep 2
+
+        echo "=== hardware peek --offset (ROM image) ==="
+        uv run romulan hardware peek --offset 0x7000 --count 16 
+        sleep 2
+
+        echo "=== hardware peek --addr (CPU bus/RAM) ==="
+        uv run romulan hardware peek --addr 0x4000 
+        sleep 2
+
+        echo "=== hardware capture (default timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 
+        sleep 2
+
+        echo "=== hardware capture (custom timeout) ==="
+        uv run romulan hardware capture --max-cycles 25000 --timeout 1  
+        sleep 2
+
+        echo "=== hardware monitor --disable ==="
+        uv run romulan hardware monitor --disable  
+        sleep 2
+
+        echo "=== hardware monitor --enable ==="
+        uv run romulan hardware monitor --enable 

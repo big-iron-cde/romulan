@@ -320,9 +320,9 @@ class TestBuildRomAsm:
         with pytest.raises(ValueError, match="missing required vectors"):
             build_rom(path, out)
 
-    def test_demo_s_matches_demo_txt(self, tmp_path: Path) -> None:
+    def test_ram_write_S_matches_ram_write_s(self, tmp_path: Path) -> None:
         hex_out = tmp_path / "rom_hex.bin"
         asm_out = tmp_path / "rom_asm.bin"
-        build_rom(REPO_ROOT / "demo.txt", hex_out)
-        build_rom(REPO_ROOT / "demo.s", asm_out)
+        build_rom(REPO_ROOT / "tests/ram_write.s", hex_out)
+        build_rom(REPO_ROOT / "tests/ram_write.S", asm_out)
         assert asm_out.read_bytes() == hex_out.read_bytes()

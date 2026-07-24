@@ -1,5 +1,5 @@
 ; Romulan demo program in 6502 assembly.
-; Builds the same 32 KB ROM image as the annotated hex dump demo.txt.
+; Builds the same 32 KB ROM image as the annotated hex dump ram_write.s.
 
         .org $8000
 
