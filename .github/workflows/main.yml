@@ -9,7 +9,7 @@ on:
 jobs:
   hardware-test:
     runs-on: self-hosted
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v4
       with:
@@ -210,7 +210,7 @@ jobs:
         sleep 2
 
         echo "=== hardware capture (custom timeout) ==="
-        uv run romulan hardware capture --max-cycles 10000 --timeout 45  
+        uv run romulan hardware capture --max-cycles 25000 --timeout 45  
         sleep 2
 
         echo "=== hardware monitor --disable ==="
