@@ -9,7 +9,7 @@ on:
 jobs:
   hardware-test:
     runs-on: self-hosted
-    timeout-minutes: 3
+    timeout-minutes: 1
     steps:
     - uses: actions/checkout@v4
       with:
