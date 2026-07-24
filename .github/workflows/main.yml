@@ -210,7 +210,7 @@ jobs:
         sleep 2
 
         echo "=== hardware capture (custom timeout) ==="
-        uv run romulan hardware capture --max-cycles 25000 --timeout 45  
+        uv run romulan hardware capture --max-cycles 25000 --timeout 1  
         sleep 2
 
         echo "=== hardware monitor --disable ==="
