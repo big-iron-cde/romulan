@@ -76,7 +76,7 @@ jobs:
     - name: Build ram_write.S (mnemonic version)
       run: |
         mkdir -p bin
-        uv run romulan tests/ram_write.S --build -o bin/ram_write.bin
+        uv run romulan tests/ram_write.S --build -o bin/ram_write_m.bin
 
     - name: Test hardware API commands on ram_write.S
       run: |
@@ -85,7 +85,7 @@ jobs:
         sleep 2
 
         echo "=== hardware upload ==="
-        uv run romulan hardware upload bin/ram_write.bin --verbose 
+        uv run romulan hardware upload bin/ram_write_m.bin --verbose 
         sleep 2
 
         echo "=== hardware reset --release ==="
