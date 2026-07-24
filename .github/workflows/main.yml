@@ -22,7 +22,7 @@ jobs:
         source $HOME/.local/bin/env
         uv sync
 
-    - name: Build ram_write.txt
+    - name: Build ram_write.s
       run: |
         mkdir -p bin
         uv run romulan tests/ram_write.s --build -o bin/ram_write.bin
@@ -73,11 +73,62 @@ jobs:
         echo "=== hardware monitor --enable ==="
         uv run romulan hardware monitor --enable --verbose 
 
-    - name: Build add.txt
+    - name: Build ram_write.S (mnemonic version)
       run: |
-        uv run romulan tests/add.txt --build -o bin/add.bin
+        mkdir -p bin
+        uv run romulan tests/ram_write.S --build -o bin/ram_write.bin
 
-    - name: Test hardware API commands on add.txt
+    - name: Test hardware API commands on ram_write.S
+      run: |
+        echo "=== hardware reset --assert ==="
+        uv run romulan hardware reset --assert --verbose
+        sleep 2
+
+        echo "=== hardware upload ==="
+        uv run romulan hardware upload bin/ram_write.bin --verbose 
+        sleep 2
+
+        echo "=== hardware reset --release ==="
+        uv run romulan hardware reset --release --verbose
+        sleep 2
+
+        echo "=== hardware status ==="
+        uv run romulan hardware status --verbose
+        sleep 2
+
+        echo "=== hardware clock ==="
+        uv run romulan hardware clock --hz 100 --verbose
+        sleep 2
+
+        echo "=== hardware peek --offset (ROM image) ==="
+        uv run romulan hardware peek --offset 0x7000 --count 16 --verbose
+        sleep 2
+
+        # not working yet, will remove the || true once it is fixed
+        echo "=== hardware peek --addr (CPU bus/RAM) ==="
+        uv run romulan hardware peek --addr 0x4000 --verbose || true
+        sleep 2
+
+        echo "=== hardware capture (default timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --verbose
+        sleep 2
+
+        echo "=== hardware capture (custom timeout) ==="
+        uv run romulan hardware capture --max-cycles 500 --timeout 45 --verbose 
+        sleep 2
+
+        echo "=== hardware monitor --disable ==="
+        uv run romulan hardware monitor --disable --verbose 
+        sleep 2
+
+        echo "=== hardware monitor --enable ==="
+        uv run romulan hardware monitor --enable --verbose 
+
+    - name: Build add.s
+      run: |
+        uv run romulan tests/add.s --build -o bin/add.bin
+
+    - name: Test hardware API commands on add.s
       run: |
         echo "=== hardware reset --assert ==="
         uv run romulan hardware reset --assert --verbose
@@ -123,11 +174,11 @@ jobs:
         echo "=== hardware monitor --enable ==="
         uv run romulan hardware monitor --enable --verbose 
 
-    - name: Build loop.txt
+    - name: Build loop.s
       run: |
-        uv run romulan tests/loop.txt --build -o bin/loop.bin
+        uv run romulan tests/loop.s --build -o bin/loop.bin
 
-    - name: Test hardware API commands on loop.txt
+    - name: Test hardware API commands on loop.s
       run: |
         echo "=== hardware reset --assert ==="
         uv run romulan hardware reset --assert --verbose
