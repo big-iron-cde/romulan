@@ -34,21 +34,21 @@ uv sync
 Build a ROM from an annotated hex file:
 
 ```bash
-uv run romulan demo.txt --build
+uv run romulan tests/ram_write.s --build
 ```
 
-Or from 6502 assembly (`demo.s` is the assembly counterpart of `demo.txt`; the input format is auto-detected):
+Or from 6502 assembly (`ram_write.S` is the assembly counterpart of `ram_write.s`; the input format is auto-detected):
 
 ```bash
-uv run romulan demo.s --build
+uv run romulan tests/ram_write.S --build
 ```
 
 Build and upload in one step (framed Hardware API):
 
 ```bash
-uv run romulan demo.txt --build --upload
-uv run romulan demo.s --build --upload
-uv run romulan demo.s --build --upload -v   # NDJSON protocol trace during upload
+uv run romulan tests/ram_write.s --build --upload
+uv run romulan tests/ram_write.S --build --upload
+uv run romulan tests/ram_write.S --build --upload -v   # NDJSON protocol trace during upload
 ```
 
 Upload an existing binary (optional `-v` / `--timeout`):

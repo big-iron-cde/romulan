@@ -19,11 +19,11 @@ uv sync
 
 ## First build and upload
 
-Romulan ships with `demo.txt`, a sample annotated hex dump, and `demo.s`, the same program in 6502 assembly. Build and upload either one (the format is auto-detected):
+Romulan ships with `ram_write.s`, a sample annotated hex dump, and `ram_write.S`, the same program in 6502 assembly. Build and upload either one (the format is auto-detected):
 
 ```bash
-uv run romulan demo.txt --build --upload
-uv run romulan demo.s --build --upload
+uv run romulan tests/ram_write.s --build --upload
+uv run romulan tests/ram_write.S --build --upload
 ```
 
 This produces `bin/rom.bin` (32 KB) and uploads it to the Pico via the framed Hardware API.
@@ -33,9 +33,9 @@ This produces `bin/rom.bin` (32 KB) and uploads it to the Pico via the framed Ha
 Romulan auto-detects the Pico when exactly one device is connected. If detection fails or finds multiple ports, specify one explicitly:
 
 ```bash
-uv run romulan demo.txt --build --upload --port /dev/ttyACM0   # Linux
-uv run romulan demo.txt --build --upload --port /dev/cu.usbmodem101  # macOS
-uv run romulan demo.txt --build --upload --port COM3             # Windows
+uv run romulan tests/ram_write.s --build --upload --port /dev/ttyACM0   # Linux
+uv run romulan tests/ram_write.s --build --upload --port /dev/cu.usbmodem101  # macOS
+uv run romulan tests/ram_write.s --build --upload --port COM3             # Windows
 ```
 
 ## Input file formats
