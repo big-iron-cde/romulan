@@ -82,10 +82,10 @@ def create_parser() -> argparse.ArgumentParser:
         "--verbose",
         "-v",
         action="store_true",
-        help="Print hardware protocol messages (SEND/RECV trace) during --upload",
+        help="Emit structured build progress (NDJSON) and hardware protocol trace (SEND/RECV) to stderr",
     )
     return parser
-
+  
 
 def _create_hardware_parser_standalone() -> argparse.ArgumentParser:
     """Create a dedicated parser for the ``hardware`` sub-command.
@@ -499,7 +499,7 @@ def main() -> None:
             sys.exit(1)
 
         try:
-            build_rom(args.input, args.output)
+            build_rom(args.input, args.output, verbose=args.verbose)
         except ValueError as exc:
             emit_error("build_failed", f"Build failed: {exc}")
             sys.exit(1)

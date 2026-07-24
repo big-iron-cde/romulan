@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -113,6 +114,23 @@ class TestCli:
         assert out.exists()
         data = out.read_bytes()
         assert len(data) == ROM_SIZE
+
+    def test_build_verbose(self, sample_hex_file: Path, tmp_path: Path, capsys) -> None:
+        out = tmp_path / "rom.bin"
+        with patch.object(
+            sys, "argv", ["romulan", str(sample_hex_file), "--build", "-o", str(out), "--verbose"]
+        ):
+            main()
+        assert out.exists()
+        captured = capsys.readouterr()
+        # Verbose output goes to stderr as NDJSON
+        events = [json.loads(line) for line in captured.err.strip().splitlines() if line.strip()]
+        assert all(e["type"] == "build" for e in events)
+        assert events[0]["event"] == "start"
+        assert events[-1]["event"] == "done"
+        assert events[-1]["ok"] is True
+        # In verbose mode human-readable stdout is suppressed
+        assert "Wrote 32768 bytes" not in captured.out
 
     def test_upload_without_rom(self, tmp_path: Path) -> None:
         out = tmp_path / "rom.bin"

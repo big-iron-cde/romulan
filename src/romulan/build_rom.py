@@ -6,6 +6,7 @@ File offset $7FFC = CPU address $FFFC (reset vector low byte)
 File offset $7FFF = CPU address $FFFF
 """
 
+import json
 import os
 import re
 import sys
@@ -283,8 +284,14 @@ def error_processing(data_dict: Dict[int, int]) -> List:
     return error_list_final
 
 
-def build_rom(input_path: Path, output_path: Path) -> None:
-    """Parse a ROM source file and write a 32 KB ROM binary.
+def _emit_build(event: str, data: dict, verbose: bool) -> None:
+    if verbose:
+        payload = {"type": "build", "event": event, **data}
+        print(json.dumps(payload, separators=(",", ":")), file=sys.stderr, flush=True)
+
+
+def build_rom(input_path: Path, output_path: Path, verbose: bool = False) -> None:
+    """Parse a hex dump file and write a 32 KB ROM binary.
 
     The input may be an annotated hex dump or 6502 assembly (auto-detected
     by :func:`detect_format`). Hex dumps get opcode and address-order
@@ -297,33 +304,52 @@ def build_rom(input_path: Path, output_path: Path) -> None:
     Side effects:
         Resets :data:`ERROR_COUNTER`, may print errors and call ``sys.exit(1)``,
         creates parent directories for ``output_path``, writes the binary file,
-        and prints a summary to stdout.
+        and prints a summary to stdout. When ``verbose`` is ``True``, structured
+        NDJSON events are emitted to stderr.
 
     Args:
         input_path: Path to the annotated hex dump or 6502 assembly file.
         output_path: Destination path for the 32 KB ``.bin`` file.
+        verbose: If ``True``, emit structured build progress to stderr.
 
     Raises:
         ValueError: If parsing fails or required vectors are missing.
     """
     global ERROR_COUNTER
     ERROR_COUNTER = 0
-    input_format = detect_format(input_path)
-    if input_format == "hex":
-        parsed = parse_hex_file(input_path)
+    
+    _emit_build("start", {"input": str(input_path), "output": str(output_path)}, verbose)
 
+    try:
+        input_format = detect_format(input_path)
+        if input_format == "hex":
+            parsed = parse_hex_file(input_path)
+        else:
+            parsed = parse_asm_file(input_path)
+    except ValueError as exc:
+        _emit_build("error", {"message": str(exc)}, verbose)
+        _emit_build("done", {"ok": False}, verbose)
+        raise
+    _emit_build("parse", {"lines_parsed": len(parsed)}, verbose)
+
+    if input_format == "hex":
         master_error_list = error_processing(parsed)
-        if ERROR_COUNTER > 0:
-            emit_error(
-                "build_failed",
-                f"Encountered {ERROR_COUNTER} errors while building ROM",
-                errors=[str(error) for error in master_error_list],
-            )
-            sys.exit(1)
     else:
-        parsed = parse_asm_file(input_path)
+        master_error_list = []
+    _emit_build("validate", {"errors": ERROR_COUNTER}, verbose)
+
+    if ERROR_COUNTER > 0:
+        if not verbose:
+            print(f"Encountered {ERROR_COUNTER} errors while building ROM:")
+            for error in master_error_list:
+                print(f"  {error}")
+            print("ROM build failed due to errors.")
+        _emit_build("error", {"errors": ERROR_COUNTER, "messages": master_error_list}, verbose)
+        _emit_build("done", {"ok": False}, verbose)
+        sys.exit(1)
 
     rom = bytearray([0xEA] * ROM_SIZE)
+    nop_fill_count = ROM_SIZE - len(parsed)
 
     for cpu_addr, byte_val in parsed.items():
         offset = cpu_to_offset(cpu_addr)
@@ -341,19 +367,35 @@ def build_rom(input_path: Path, output_path: Path) -> None:
         if rom[offset] == 0xEA:
             missing.append(f"  ${addr:04X} ({desc})")
     if missing:
-        raise ValueError("ROM is missing required vectors:\n" + "\n".join(missing))
+        msg = "ROM is missing required vectors:\n" + "\n".join(missing)
+        _emit_build("error", {"message": msg}, verbose)
+        _emit_build("done", {"ok": False}, verbose)
+        raise ValueError(msg)
+
+    _emit_build("fill", {"start": "0x0000", "end": f"0x{ROM_SIZE - 1:04X}", "byte": "0xEA", "count": nop_fill_count}, verbose)
+
+    for addr, desc in required_vectors.items():
+        offset = cpu_to_offset(addr)
+        _emit_build("vector", {"addr": f"0x{addr:04X}", "name": desc, "value": f"0x{rom[offset]:02X}", "ok": True}, verbose)
 
     os.makedirs(output_path.parent, exist_ok=True)
     with open(output_path, "wb") as fh:
         fh.write(rom)
 
-    emit_result(
-        "build",
-        {
-            "bytes": len(rom),
-            "output": str(output_path),
-            "format": input_format,
-            "reset_vector": f"{rom[0x7FFD]:02X}{rom[0x7FFC]:02X}",
-            "irq_vector": f"{rom[0x7FFF]:02X}{rom[0x7FFE]:02X}",
-        },
+    _emit_build(
+        "write",
+        {"path": str(output_path), "bytes": len(rom), "format": input_format},
+        verbose,
     )
+    reset_vector = f"0x{rom[0x7FFD]:02X}{rom[0x7FFC]:02X}"
+    irq_vector = f"0x{rom[0x7FFF]:02X}{rom[0x7FFE]:02X}"
+    _emit_build(
+        "done",
+        {"ok": True, "reset_vector": reset_vector, "irq_vector": irq_vector, "format": input_format},
+        verbose,
+    )
+
+    if not verbose:
+        print(f"Wrote {len(rom)} bytes to {output_path}")
+        print(f"  Reset vector → ${rom[0x7FFD]:02X}{rom[0x7FFC]:02X}")
+        print(f"  IRQ vector   → ${rom[0x7FFF]:02X}{rom[0x7FFE]:02X}")
